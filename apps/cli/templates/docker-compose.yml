@@ -1,0 +1,213 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    shm_size: '1gb'
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-storage}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgres/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-storage}"]
+      interval: 1s
+      timeout: 5s
+      retries: 30
+    networks:
+      - supastor
+
+  pg_bouncer:
+    image: bitnami/pgbouncer:latest
+    restart: unless-stopped
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-postgres}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-postgres}
+      PGBOUNCER_POOL_MODE: ${PGBOUNCER_POOL_MODE:-transaction}
+      PGBOUNCER_IGNORE_STARTUP_PARAMETERS: "extra_float_digits,options"
+      PGBOUNCER_STATS_USERS: ${POSTGRES_USER:-postgres}
+      PGBOUNCER_MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-100}
+      PGBOUNCER_DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-20}
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - supastor
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-supastor}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-supastor123}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_DEFAULT_BUCKETS:-storage}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: timeout 5s bash -c ':> /dev/tcp/127.0.0.1/9000' || exit 1
+      interval: 5s
+      timeout: 20s
+      retries: 10
+    networks:
+      - supastor
+
+  minio_setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-supastor}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-supastor123}
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set minio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc mb minio/storage || true;
+      /usr/bin/mc anonymous set public minio/storage;
+      exit 0;
+      "
+    networks:
+      - supastor
+
+  # Storage with S3 backend (default)
+  storage:
+    image: supabase/storage-api:v1.13.1
+    restart: unless-stopped
+    environment:
+      # Server
+      SERVER_PORT: 5000
+      # Auth
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      AUTH_JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ANON_KEY: ${ANON_KEY}
+      SERVICE_KEY: ${SERVICE_KEY}
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-storage}
+      DATABASE_POOL_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@pg_bouncer:6432/${POSTGRES_DB:-storage}
+      # Migrations
+      DB_INSTALL_ROLES: ${DB_INSTALL_ROLES:-true}
+      # Storage Backend
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-s3}
+      # S3 Configuration
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-storage}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-http://minio:9000}
+      STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-true}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-supastor}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-supastor123}}
+      # File Storage (fallback)
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      # Upload Configuration
+      UPLOAD_FILE_SIZE_LIMIT: ${UPLOAD_FILE_SIZE_LIMIT:-524288000}
+      UPLOAD_FILE_SIZE_LIMIT_STANDARD: ${UPLOAD_FILE_SIZE_LIMIT_STANDARD:-52428800}
+      UPLOAD_SIGNED_URL_EXPIRATION_TIME: ${UPLOAD_SIGNED_URL_EXPIRATION_TIME:-120}
+      TUS_URL_PATH: ${TUS_URL_PATH:-/upload/resumable}
+      TUS_URL_EXPIRY_MS: ${TUS_URL_EXPIRY_MS:-3600000}
+      # Image Transformation
+      IMAGE_TRANSFORMATION_ENABLED: ${IMAGE_TRANSFORMATION_ENABLED:-false}
+      IMGPROXY_URL: ${IMGPROXY_URL:-http://imgproxy:8080}
+      IMGPROXY_REQUEST_TIMEOUT: ${IMGPROXY_REQUEST_TIMEOUT:-15}
+      # S3 Protocol
+      S3_PROTOCOL_ACCESS_KEY_ID: ${S3_PROTOCOL_ACCESS_KEY_ID}
+      S3_PROTOCOL_ACCESS_KEY_SECRET: ${S3_PROTOCOL_ACCESS_KEY_SECRET}
+      # Tenant
+      TENANT_ID: ${TENANT_ID:-supastor}
+      REGION: ${REGION:-us-east-1}
+      GLOBAL_S3_BUCKET: ${GLOBAL_S3_BUCKET:-}
+    ports:
+      - "${STORAGE_PORT:-5000}:5000"
+    volumes:
+      - storage_data:/var/lib/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pg_bouncer:
+        condition: service_started
+      minio_setup:
+        condition: service_completed_successfully
+    networks:
+      - supastor
+
+  postgres-meta:
+    image: supabase/postgres-meta:v0.89.3
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: postgres
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: ${POSTGRES_DB:-postgres}
+      PG_META_DB_USER: ${POSTGRES_USER:-postgres}
+      PG_META_DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PG_META_DB_SSL: ${POSTGRES_SSL:-disable}
+    ports:
+      - "${POSTGRES_META_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then((r) => {if (r.status !== 200) throw new Error(r.status)})"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+    networks:
+      - supastor
+
+  imgproxy:
+    image: darthsim/imgproxy:v3.24
+    restart: unless-stopped
+    environment:
+      IMGPROXY_BIND: :8080
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: /var/lib/storage
+      IMGPROXY_USE_ETAG: ${IMGPROXY_USE_ETAG:-true}
+      IMGPROXY_ENABLE_WEBP_DETECTION: ${IMGPROXY_ENABLE_WEBP_DETECTION:-true}
+      IMGPROXY_JPEG_PROGRESSIVE: ${IMGPROXY_JPEG_PROGRESSIVE:-false}
+      IMGPROXY_PNG_INTERLACED: ${IMGPROXY_PNG_INTERLACED:-false}
+      IMGPROXY_QUALITY: ${IMGPROXY_QUALITY:-95}
+      IMGPROXY_MAX_SRC_RESOLUTION: ${IMGPROXY_MAX_SRC_RESOLUTION:-50}
+      IMGPROXY_MAX_SRC_FILE_SIZE: ${IMGPROXY_MAX_SRC_FILE_SIZE:-104857600}
+      IMGPROXY_SECRET: ${IMGPROXY_SECRET:-}
+      IMGPROXY_SALT: ${IMGPROXY_SALT:-}
+    volumes:
+      - storage_data:/var/lib/storage:ro
+    networks:
+      - supastor
+    profiles:
+      - imgproxy
+      - full
+
+  # Optional: Redis for rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD:-supastor123}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - supastor
+    profiles:
+      - redis
+      - full
+
+networks:
+  supastor:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  storage_data:
+  minio_data:
+  redis_data:
