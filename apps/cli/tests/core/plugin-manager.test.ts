@@ -2,12 +2,13 @@
  * Plugin Manager tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PluginManager } from '../../src/core/plugin-manager.js';
-import { CommandContext, Plugin, PluginType } from '../../src/types/index.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
+import { it, vi, expect, describe, beforeEach } from 'vitest';
+
 import { LoggerImpl } from '../../src/core/logger.js';
+import { EventBusImpl } from '../../src/core/event-bus.js';
+import { PluginManager } from '../../src/core/plugin-manager.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
+import { Plugin, PluginType, CommandContext } from '../../src/types/index.js';
 
 describe.skip('PluginManager - Skipping tests for non-existent methods', () => {
   let context: CommandContext;

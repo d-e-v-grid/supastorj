@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Bare metal deployment support with `supastorj deploy` command
+- Systemd service management for production deployments
+- Two deployment modes: Docker (dev) and Bare Metal (prod)
+- PostgreSQL authentication fix for container environments
+
+### Changed
+- Simplified Docker setup to single docker-compose.yml file
+- Updated PostgreSQL authentication configuration
+- Improved environment variable handling in containers
+- Updated README with deployment modes documentation
+
+### Removed
+- Removed docker-compose.prod.yml and docker-compose.monitoring.yml
+- Removed unused PostgreSQL configuration files (pg_hba.conf, postgresql.conf)
+
+## [0.2.0] - 2025-01-10
+
+### Added
 - Initial monorepo structure with Yarn workspaces
 - Base configuration files (TypeScript, ESLint, Prettier)
 - Project architecture documentation
@@ -23,9 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive type definitions for the entire system
 - Improved architecture documentation with detailed component descriptions
 - Docker adapter for container management
-- Initial command implementations:
-  - `init` command with project scaffolding
-  - Placeholder commands: `up`, `down`, `status`, `logs`
+- Fully implemented CLI commands:
+  - `init` command with project scaffolding and template support
+  - `up` command with health checks and detached/attached modes
+  - `down` command with volume and image cleanup options
+  - `status` command with JSON output and watch mode
+  - `logs` command with follow mode and filtering
 - Build script for the monorepo
 - TUI components:
   - StatusDashboard component for service monitoring
@@ -40,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Environment variable generation for all services
 - Test infrastructure with Vitest
 - Example unit tests for event bus
+- Global npm link commands for local development testing
+- Executable bin file for global CLI usage
 
 ### Changed
 - Enhanced architecture design with modular plugin system
@@ -60,16 +83,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated TypeScript configuration for ES2023 target
 - Enhanced TypeScript strict mode with additional checks
 - Updated Docker Compose template to use PostgreSQL 17
-- Fixed naming consistency (Supastorj → Supastor)
+- Fixed naming consistency (Supastorj → Supastorj)
 
 ### Fixed
 - Fixed TypeScript build errors:
-  - js-yaml import syntax (changed from `parse`/`stringify` to `load`/`dump`)
+  - js-yaml import syntax (changed from named imports to namespace import)
   - Docker adapter log streaming types and async iterator handling
   - process.env property access with bracket notation for strict mode
   - Removed duplicate helper functions in StatusDashboard
+  - Fixed parseInt calls with proper undefined handling
+  - Fixed React/JSX usage in status command
 - Fixed Docker adapter log handling for follow/non-follow modes
 - Fixed all TypeScript strict mode compliance issues
+- Fixed Commander.js exitOverride error handling for help/version commands
+- Fixed error output formatting in up/down commands (was showing as object with indices)
+- Updated Docker image versions to use specific tags instead of 'latest'
+- Removed deprecated 'version' attribute from docker-compose.yml
 
 ### Removed
 - Removed `scripts/build.sh` in favor of using `turbo build` from turborepo

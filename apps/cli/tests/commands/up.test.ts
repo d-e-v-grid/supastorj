@@ -2,14 +2,15 @@
  * Up command tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
 import { upCommand } from '../../src/commands/up.js';
-import { CommandContext, ServiceStatus } from '../../src/types/index.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
 import { LoggerImpl } from '../../src/core/logger.js';
+import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
 import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
-import * as fs from 'fs';
+import { ServiceStatus, CommandContext } from '../../src/types/index.js';
 
 vi.mock('fs');
 vi.mock('ora', () => ({
@@ -115,7 +116,7 @@ describe('Up Command', () => {
       'docker-compose',
       expect.arrayContaining([
         '-f', expect.stringContaining('docker-compose.yml'),
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'up',
         '-d'
       ]),
@@ -133,7 +134,7 @@ describe('Up Command', () => {
       'docker-compose',
       expect.arrayContaining([
         '-f', expect.stringContaining('docker-compose.yml'),
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'up'
       ]),
       { stdio: 'inherit' }

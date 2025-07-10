@@ -2,15 +2,16 @@
  * Up command - Start all services
  */
 
-import { CommandDefinition, CommandContext } from '../types/index.js';
-import { DockerAdapter } from '../adapters/docker-adapter.js';
-import { existsSync } from 'fs';
-import { readFile } from 'fs/promises';
-import { join } from 'path';
-import { createServer } from 'net';
 import ora from 'ora';
 import chalk from 'chalk';
+import { join } from 'path';
 import dotenv from 'dotenv';
+import { existsSync } from 'fs';
+import { createServer } from 'net';
+import { readFile } from 'fs/promises';
+
+import { DockerAdapter } from '../adapters/docker-adapter.js';
+import { ServiceStatus, CommandContext, CommandDefinition } from '../types/index.js';
 
 // Check if port is available
 async function isPortAvailable(port: number): Promise<boolean> {
@@ -64,6 +65,11 @@ export const upCommand: CommandDefinition = {
       description: 'Build images before starting containers',
       defaultValue: false,
     },
+    {
+      flags: '--no-image-transform',
+      description: 'Disable image transformation service',
+      defaultValue: false,
+    },
   ],
   action: async (context: CommandContext, options: any) => {
     const spinner = ora();
@@ -74,13 +80,13 @@ export const upCommand: CommandDefinition = {
       const envFile = join(process.cwd(), '.env');
       
       if (!existsSync(composeFile)) {
-        context.logger.error('No docker-compose.yml found. Run "supastorj init" first.');
+        context.logger.error('No docker-compose.yml found. Run "supastorj deploy" first.');
         process.exit(1);
       }
       
       // Check if image transformation is enabled
       let imageTransformEnabled = false;
-      if (existsSync(envFile)) {
+      if (!options.noImageTransform && existsSync(envFile)) {
         const envContent = await readFile(envFile, 'utf-8');
         const match = envContent.match(/IMAGE_TRANSFORMATION_ENABLED=(.+)/);
         if (match && match[1] === 'true') {
@@ -121,7 +127,7 @@ export const upCommand: CommandDefinition = {
       }
 
       // Prepare docker-compose command arguments
-      const args = ['-f', composeFile, '-p', 'supastor', 'up'];
+      const args = ['-f', composeFile, '-p', 'supastorj', 'up'];
       
       if (options.detach) {
         args.push('-d');
@@ -200,8 +206,8 @@ export const upCommand: CommandDefinition = {
           // Even if docker-compose returns non-zero, check if services are actually running
           const checkProcess = await execa(dockerComposeCmd, 
             dockerComposeCmd === 'docker' 
-              ? ['compose', '-f', composeFile, '-p', 'supastor', 'ps', '--format', 'json']
-              : ['-f', composeFile, '-p', 'supastor', 'ps', '--format', 'json'],
+              ? ['compose', '-f', composeFile, '-p', 'supastorj', 'ps', '--format', 'json']
+              : ['-f', composeFile, '-p', 'supastorj', 'ps', '--format', 'json'],
             { reject: false }
           );
           
@@ -216,22 +222,69 @@ export const upCommand: CommandDefinition = {
         spinner.start('Checking service health...');
         const adapters = await DockerAdapter.fromCompose(
           composeFile,
-          'supastor',
+          'supastorj',
           context.logger
         );
         
-        // Wait for services to be healthy
+        // Filter out one-time setup containers
+        const oneTimeContainers = ['minio_setup'];
+        const persistentAdapters = adapters.filter(
+          adapter => !oneTimeContainers.includes(adapter.name)
+        );
+        
+        // Get list of actually running services
+        const runningServices = new Set<string>();
+        for (const adapter of persistentAdapters) {
+          const status = await adapter.getStatus();
+          if (status === ServiceStatus.Running || status === ServiceStatus.Starting) {
+            runningServices.add(adapter.name);
+          }
+        }
+        
+        // Wait for services to be healthy (only check running services)
         let allHealthy = false;
         let attempts = 0;
-        const maxAttempts = 30;
+        const maxAttempts = 60; // Increase to 2 minutes for storage service
+        const serviceErrors: Map<string, string> = new Map();
         
         while (!allHealthy && attempts < maxAttempts) {
           allHealthy = true;
-          for (const adapter of adapters) {
+          
+          // Update running services list to catch restarting containers
+          for (const adapter of persistentAdapters) {
+            const status = await adapter.getStatus();
+            if (status === ServiceStatus.Running || status === ServiceStatus.Starting || status === ServiceStatus.Restarting) {
+              runningServices.add(adapter.name);
+              
+              // Check for restarting containers (likely auth issues)
+              if (status === ServiceStatus.Restarting && adapter.name === 'storage') {
+                try {
+                  const logs = await adapter.getLogs({ tail: 5 });
+                  if (logs.includes('password authentication failed')) {
+                    serviceErrors.set(adapter.name, 'Authentication failed - check PostgreSQL credentials');
+                  }
+                } catch {
+                  // Ignore error if we can't get the component
+                }
+              }
+            }
+          }
+          
+          for (const adapter of persistentAdapters) {
+            // Skip services that are not running
+            if (!runningServices.has(adapter.name)) {
+              continue;
+            }
+            
             const health = await adapter.healthcheck();
             if (!health.healthy) {
               allHealthy = false;
-              spinner.text = `Waiting for ${adapter.name} to be healthy...`;
+              const errorMsg = serviceErrors.get(adapter.name);
+              if (errorMsg) {
+                spinner.text = `${adapter.name}: ${errorMsg}`;
+              } else {
+                spinner.text = `Waiting for ${adapter.name} to be healthy...`;
+              }
               break;
             }
           }
@@ -245,13 +298,18 @@ export const upCommand: CommandDefinition = {
         if (allHealthy) {
           spinner.succeed('All services are healthy');
           
-          // Show service status
+          // Show service status (only show running services)
           console.log('\n' + chalk.bold('Service Status:'));
-          for (const adapter of adapters) {
+          for (const adapter of persistentAdapters) {
+            // Only show running services
+            if (!runningServices.has(adapter.name)) {
+              continue;
+            }
+            
             const status = await adapter.getStatus();
             console.log(
               `  ${chalk.cyan(adapter.name.padEnd(20))} ${
-                status === 'running' ? chalk.green('●') : chalk.red('●')
+                status === ServiceStatus.Running ? chalk.green('●') : chalk.red('●')
               } ${status}`
             );
           }

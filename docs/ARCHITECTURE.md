@@ -198,7 +198,7 @@ Hierarchical configuration with environment-specific overrides.
 
 **Configuration Schema:**
 ```yaml
-# supastor.config.yaml
+# supastorj.config.yaml
 version: "1.0"
 environments:
   default:
@@ -244,8 +244,8 @@ All operations are logged with:
 ### Development Environment
 
 ```bash
-supastor init --dev
-supastor up --dev
+supastorj init --dev
+supastorj up --dev
 ```
 
 - Single-node deployment
@@ -256,8 +256,8 @@ supastor up --dev
 ### Production Environment
 
 ```bash
-supastor init --prod
-supastor up --prod --scale storage=3 --scale meta=2
+supastorj init --prod
+supastorj up --prod --scale storage=3 --scale meta=2
 ```
 
 - Multi-node deployment
@@ -268,8 +268,8 @@ supastor up --prod --scale storage=3 --scale meta=2
 ### Bare Metal Deployment
 
 ```bash
-supastor bootstrap --baremetal
-supastor deploy --target=production
+supastorj bootstrap --baremetal
+supastorj deploy --target=production
 ```
 
 - System dependency installation

@@ -2,18 +2,19 @@
  * Plugin management system for extensibility
  */
 
-import { readdir, access, constants } from 'fs/promises';
-import { join, resolve } from 'path';
 import { pathToFileURL } from 'url';
+import { join, resolve } from 'path';
+import { access, readdir, constants } from 'fs/promises';
+
 import {
   Plugin,
-  PluginContext,
-  PluginType,
-  CommandDefinition,
-  ServiceAdapter,
   EventType,
+  PluginType,
   EventHandler,
+  PluginContext,
+  ServiceAdapter,
   CommandContext,
+  CommandDefinition,
 } from '../types/index.js';
 
 export interface PluginManagerOptions {
@@ -34,7 +35,7 @@ export class PluginManager {
     this.context = context;
     this.pluginPaths = options.pluginPaths || [
       './plugins',
-      join(process.env['HOME'] || '~', '.supastor', 'plugins'),
+      join(process.env['HOME'] || '~', '.supastorj', 'plugins'),
     ];
   }
 
@@ -246,6 +247,10 @@ export class PluginManager {
         context.registerHook = (event: EventType, handler: EventHandler) => {
           this.registerHook(plugin.name, event, handler);
         };
+        break;
+        
+      default:
+        this.context.logger.warn(`Unknown plugin type: ${plugin.type}`);
         break;
     }
 

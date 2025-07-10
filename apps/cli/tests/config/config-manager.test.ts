@@ -2,10 +2,10 @@
  * Config Manager tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFile, writeFile } from 'fs/promises';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
 import { ConfigManager } from '../../src/config/config-manager.js';
-import { readFile, writeFile, access } from 'fs/promises';
-import { constants } from 'fs';
 
 vi.mock('fs/promises');
 
@@ -76,7 +76,7 @@ describe('ConfigManager', () => {
     
     const config = await configManager.load();
     expect(config).toEqual(mockConfig);
-    expect(readFile).toHaveBeenCalledWith('./supastor.config.yaml', 'utf-8');
+    expect(readFile).toHaveBeenCalledWith('./supastorj.config.yaml', 'utf-8');
   });
 
   it('should handle YAML configuration files', async () => {
@@ -110,7 +110,7 @@ settings:
     await configManager.save(mockConfig);
     expect(writeFile).toHaveBeenCalled();
     const [path, content] = vi.mocked(writeFile).mock.calls[0];
-    expect(path).toBe('./supastor.config.yaml');
+    expect(path).toBe('./supastorj.config.yaml');
     expect(content).toContain("version: '1.0'");
   });
 

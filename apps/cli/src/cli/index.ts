@@ -2,24 +2,24 @@
  * Supastorj CLI - Main entry point
  */
 
-import { Command } from 'commander';
-import { readFile } from 'fs/promises';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import chalk from 'chalk';
+import { Command } from 'commander';
+import { fileURLToPath } from 'url';
+import { join, dirname } from 'path';
+import { readFile } from 'fs/promises';
 
-import { Environment, CommandContext } from '../types/index.js';
-import { ConfigManager } from '../config/config-manager.js';
-import { EventBusImpl } from '../core/event-bus.js';
-import { LoggerImpl } from '../core/logger.js';
-import { PluginManager } from '../core/plugin-manager.js';
-
-// Import commands
-import { initCommand } from '../commands/init.js';
 import { upCommand } from '../commands/up.js';
+import { LoggerImpl } from '../core/logger.js';
+// Import commands
 import { downCommand } from '../commands/down.js';
-import { statusCommand } from '../commands/status.js';
 import { logsCommand } from '../commands/logs.js';
+import { EventBusImpl } from '../core/event-bus.js';
+import { debugCommand } from '../commands/debug.js';
+import { statusCommand } from '../commands/status.js';
+import { PluginManager } from '../core/plugin-manager.js';
+import { deployCommand } from '../commands/deploy/index.js';
+import { ConfigManager } from '../config/config-manager.js';
+import { Environment, CommandContext } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -49,7 +49,7 @@ class SupastorCLI {
       .description('Supastorj CLI - DevOps platform for Supabase Storage management')
       .version(packageJson.version)
       .option('-e, --env <environment>', 'Environment to use', Environment.Development)
-      .option('-c, --config <path>', 'Path to configuration file', './supastor.config.yaml')
+      .option('-c, --config <path>', 'Path to configuration file', './supastorj.config.yaml')
       .option('--log-level <level>', 'Log level (debug, info, warn, error)', 'info')
       .option('--no-audit', 'Disable audit logging')
       .hook('preAction', async (thisCommand) => {
@@ -58,11 +58,12 @@ class SupastorCLI {
       });
 
     // Add commands
-    this.addCommand(initCommand);
+    this.addCommand(deployCommand);
     this.addCommand(upCommand);
     this.addCommand(downCommand);
     this.addCommand(statusCommand);
     this.addCommand(logsCommand);
+    this.addCommand(debugCommand);
 
     // Add global error handler
     this.program.exitOverride();

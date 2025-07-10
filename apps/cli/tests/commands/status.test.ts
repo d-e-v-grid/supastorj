@@ -2,15 +2,16 @@
  * Status command tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { statusCommand } from '../../src/commands/status.js';
-import { CommandContext, ServiceStatus } from '../../src/types/index.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
-import { LoggerImpl } from '../../src/core/logger.js';
-import { ConfigManager } from '../../src/config/config-manager.js';
-import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
 import * as fs from 'fs';
 import { render } from 'ink-testing-library';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
+import { LoggerImpl } from '../../src/core/logger.js';
+import { EventBusImpl } from '../../src/core/event-bus.js';
+import { statusCommand } from '../../src/commands/status.js';
+import { ConfigManager } from '../../src/config/config-manager.js';
+import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
+import { ServiceStatus, CommandContext } from '../../src/types/index.js';
 
 vi.mock('fs');
 vi.mock('../../src/adapters/docker-adapter.js');

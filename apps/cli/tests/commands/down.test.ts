@@ -2,13 +2,14 @@
  * Down command tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
+import { LoggerImpl } from '../../src/core/logger.js';
 import { downCommand } from '../../src/commands/down.js';
 import { CommandContext } from '../../src/types/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
-import { LoggerImpl } from '../../src/core/logger.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
-import * as fs from 'fs';
 
 vi.mock('fs');
 const mockSpinner = {
@@ -101,7 +102,7 @@ describe('Down Command', () => {
       'docker-compose',
       expect.arrayContaining([
         '-f', expect.stringContaining('docker-compose.yml'),
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'down'
       ]),
       { stdio: 'pipe' }
@@ -229,6 +230,6 @@ describe('Down Command', () => {
 
     const args = vi.mocked(execa).mock.calls[0][1];
     const projectIndex = args.indexOf('-p');
-    expect(args[projectIndex + 1]).toBe('supastor');
+    expect(args[projectIndex + 1]).toBe('supastorj');
   });
 });

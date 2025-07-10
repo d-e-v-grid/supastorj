@@ -2,14 +2,15 @@
  * Logs command tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { logsCommand } from '../../src/commands/logs.js';
-import { CommandContext, ServiceStatus, ServiceAdapter } from '../../src/types/index.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
+import * as fs from 'fs';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
 import { LoggerImpl } from '../../src/core/logger.js';
+import { logsCommand } from '../../src/commands/logs.js';
+import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
 import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
-import * as fs from 'fs';
+import { ServiceStatus, CommandContext } from '../../src/types/index.js';
 
 vi.mock('fs');
 vi.mock('../../src/adapters/docker-adapter.js');

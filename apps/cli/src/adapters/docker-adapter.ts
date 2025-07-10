@@ -3,17 +3,18 @@
  */
 
 import Docker from 'dockerode';
-import { readFile } from 'fs/promises';
 import * as yaml from 'js-yaml';
+import { readFile } from 'fs/promises';
+
 import { execDockerCompose } from '../utils/docker-compose.js';
 import {
-  ServiceAdapter,
+  Logger,
+  LogOptions,
   ServiceType,
   ServiceStatus,
-  LogOptions,
+  ServiceAdapter,
   HealthCheckResult,
   DockerComposeConfig,
-  Logger,
 } from '../types/index.js';
 
 export interface DockerAdapterOptions {
@@ -37,7 +38,7 @@ export class DockerAdapter implements ServiceAdapter {
     this.type = ServiceType.Postgres; // This should be determined from service config
     this.docker = new Docker();
     this.composeFile = options.composeFile || './docker-compose.yml';
-    this.projectName = options.projectName || 'supastor';
+    this.projectName = options.projectName || 'supastorj';
     this.logger = options.logger;
   }
 
@@ -119,7 +120,12 @@ export class DockerAdapter implements ServiceAdapter {
       } else if (info.State.Paused) {
         return ServiceStatus.Stopped;
       } else if (info.State.Restarting) {
-        return ServiceStatus.Starting;
+        return ServiceStatus.Restarting;
+      } else if (info.State.Status === 'restarting') {
+        return ServiceStatus.Restarting;
+      } else if (info.State.Status === 'exited' && info.State.ExitCode === 0) {
+        // For one-time containers that completed successfully
+        return ServiceStatus.Running; // Consider them as "running" (completed)
       } else {
         return ServiceStatus.Stopped;
       }
@@ -155,7 +161,7 @@ export class DockerAdapter implements ServiceAdapter {
         const now = Date.now();
         uptime = Math.floor((now - startTime) / 1000);
       }
-      
+
       // Extract port mappings
       const ports = info.NetworkSettings?.Ports ? 
         Object.entries(info.NetworkSettings.Ports).flatMap(([privatePort, bindings]) => {
@@ -252,6 +258,36 @@ export class DockerAdapter implements ServiceAdapter {
   }
 
   /**
+   * Get recent logs as a string (non-streaming)
+   */
+  async getLogs(options: { tail?: number } = {}): Promise<string> {
+    const { tail = 50 } = options;
+    
+    try {
+      const containerName = `${this.projectName}-${this.name}-1`;
+      const container = this.docker.getContainer(containerName);
+      
+      const logs = await container.logs({
+        stdout: true,
+        stderr: true,
+        follow: false,
+        tail,
+        timestamps: false,
+      } as Docker.ContainerLogsOptions & { follow: false });
+      
+      // Convert buffer to string
+      if (Buffer.isBuffer(logs)) {
+        return this.parseLogBuffer(logs);
+      } else {
+        return String(logs);
+      }
+    } catch (error) {
+      this.logger.error(`Failed to get logs for service ${this.name}:`, error);
+      return '';
+    }
+  }
+
+  /**
    * Perform health check
    */
   async healthcheck(): Promise<HealthCheckResult> {
@@ -260,10 +296,25 @@ export class DockerAdapter implements ServiceAdapter {
       const container = this.docker.getContainer(containerName);
       const info = await container.inspect();
       
-      if (!info.State || !info.State.Running) {
+      if (!info.State) {
         return {
           healthy: false,
-          message: 'stopped',
+          message: 'no state information',
+        };
+      }
+      
+      // Check if this is a one-time container that has exited successfully
+      if (info.State.Status === 'exited' && info.State.ExitCode === 0) {
+        return {
+          healthy: true,
+          message: 'completed successfully',
+        };
+      }
+      
+      if (!info.State.Running) {
+        return {
+          healthy: false,
+          message: `stopped (exit code: ${info.State.ExitCode || 'unknown'})`,
         };
       }
       
@@ -383,17 +434,6 @@ export class DockerAdapter implements ServiceAdapter {
     }
   }
 
-  /**
-   * Parse log chunk from Docker stream
-   */
-  private parseLogChunk(chunk: Buffer): string {
-    // Docker adds an 8-byte header to each log line
-    // We need to skip it to get the actual log content
-    if (chunk.length > 8) {
-      return chunk.slice(8).toString().trim();
-    }
-    return chunk.toString().trim();
-  }
 
   /**
    * Parse log line
@@ -402,6 +442,65 @@ export class DockerAdapter implements ServiceAdapter {
     // Remove Docker log prefix if present
     const match = line.match(/^\w{8}\s+(.+)$/);
     return match ? match[1] || line : line;
+  }
+
+  /**
+   * Parse Docker log chunk (with header)
+   */
+  private parseLogChunk(chunk: Buffer): string {
+    // Docker multiplexed stream format:
+    // header := [8]byte{STREAM_TYPE, 0, 0, 0, SIZE1, SIZE2, SIZE3, SIZE4}
+    if (chunk.length < 8) {
+      return chunk.toString();
+    }
+    
+    const header = chunk.slice(0, 8);
+    const streamType = header[0]; // 1 = stdout, 2 = stderr
+    const size = header.readUInt32BE(4);
+    
+    if (size > 0 && chunk.length >= 8 + size) {
+      return chunk.slice(8, 8 + size).toString();
+    }
+    
+    return chunk.toString();
+  }
+
+  /**
+   * Parse Docker log buffer
+   */
+  private parseLogBuffer(buffer: Buffer): string {
+    let result = '';
+    let offset = 0;
+    
+    while (offset < buffer.length) {
+      if (buffer.length - offset < 8) {
+        // Not enough data for header
+        result += buffer.slice(offset).toString();
+        break;
+      }
+      
+      const header = buffer.slice(offset, offset + 8);
+      const streamType = header[0];
+      const size = header.readUInt32BE(4);
+      
+      if (streamType === 1 || streamType === 2) {
+        // Valid stream type
+        if (buffer.length - offset >= 8 + size) {
+          result += buffer.slice(offset + 8, offset + 8 + size).toString();
+          offset += 8 + size;
+        } else {
+          // Not enough data
+          result += buffer.slice(offset).toString();
+          break;
+        }
+      } else {
+        // Invalid header, treat as plain text
+        result += buffer.slice(offset).toString();
+        break;
+      }
+    }
+    
+    return result;
   }
 
   /**

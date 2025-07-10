@@ -2,11 +2,12 @@
  * Docker Adapter tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
-import { ServiceStatus } from '../../src/types/index.js';
-import { LoggerImpl } from '../../src/core/logger.js';
 import Docker from 'dockerode';
+import { it, vi, expect, describe, beforeEach } from 'vitest';
+
+import { LoggerImpl } from '../../src/core/logger.js';
+import { ServiceStatus } from '../../src/types/index.js';
+import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
 
 // Mock dockerode
 vi.mock('dockerode');
@@ -58,7 +59,7 @@ describe('DockerAdapter', () => {
             '5432/tcp': [{ HostPort: '5432' }],
           },
           Networks: {
-            supastor: {},
+            supastorj: {},
           },
         },
         Config: {
@@ -116,7 +117,7 @@ describe('DockerAdapter', () => {
     dockerAdapter = new DockerAdapter({
       serviceName: 'postgres',
       composeFile: './docker-compose.yml',
-      projectName: 'supastor',
+      projectName: 'supastorj',
       logger,
     });
   });
@@ -129,7 +130,7 @@ describe('DockerAdapter', () => {
       
       expect(execa).toHaveBeenCalledWith('docker-compose', [
         '-f', './docker-compose.yml',
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'up', '-d', 'postgres'
       ]);
       expect(logger.info).toHaveBeenCalledWith('Service started: postgres');
@@ -141,7 +142,7 @@ describe('DockerAdapter', () => {
       
       expect(execa).toHaveBeenCalledWith('docker-compose', [
         '-f', './docker-compose.yml',
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'stop', 'postgres'
       ]);
       expect(logger.info).toHaveBeenCalledWith('Service stopped: postgres');
@@ -153,7 +154,7 @@ describe('DockerAdapter', () => {
       
       expect(execa).toHaveBeenCalledWith('docker-compose', [
         '-f', './docker-compose.yml',
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'restart', 'postgres'
       ]);
       expect(logger.info).toHaveBeenCalledWith('Service restarted: postgres');
@@ -268,7 +269,7 @@ describe('DockerAdapter', () => {
 
     it('should follow logs', async () => {
       const mockStream = {
-        [Symbol.asyncIterator]: async function* () {
+        async *[Symbol.asyncIterator] () {
           yield Buffer.from('\x00\x00\x00\x00\x00\x00\x00\x08log line 1');
           yield Buffer.from('\x00\x00\x00\x00\x00\x00\x00\x08log line 2');
         },
@@ -321,7 +322,7 @@ describe('DockerAdapter', () => {
       
       expect(execa).toHaveBeenCalledWith('docker-compose', [
         '-f', './docker-compose.yml',
-        '-p', 'supastor',
+        '-p', 'supastorj',
         'up', '-d', '--scale', 'postgres=3', 'postgres'
       ]);
     });
@@ -353,7 +354,7 @@ describe('DockerAdapter', () => {
     it('should create adapters from compose file', async () => {
       const adapters = await DockerAdapter.fromCompose(
         './docker-compose.yml',
-        'supastor',
+        'supastorj',
         logger
       );
       
@@ -367,7 +368,7 @@ describe('DockerAdapter', () => {
       vi.mocked(readFile).mockResolvedValue('invalid yaml content {');
       
       await expect(
-        DockerAdapter.fromCompose('./invalid.yml', 'supastor', logger)
+        DockerAdapter.fromCompose('./invalid.yml', 'supastorj', logger)
       ).rejects.toThrow();
     });
   });

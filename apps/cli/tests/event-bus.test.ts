@@ -2,9 +2,10 @@
  * Event bus tests
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { EventBusImpl } from '../src/core/event-bus.js';
+import { it, vi, expect, describe } from 'vitest';
+
 import { EventType } from '../src/types/index.js';
+import { EventBusImpl } from '../src/core/event-bus.js';
 
 describe('EventBus', () => {
   it('should emit and receive events', () => {

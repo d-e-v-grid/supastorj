@@ -2,14 +2,15 @@
  * Status command - Show service status
  */
 
-import { CommandDefinition, CommandContext, ServiceStatus } from '../types/index.js';
-import { DockerAdapter } from '../adapters/docker-adapter.js';
-import { existsSync } from 'fs';
-import { join } from 'path';
 import ora from 'ora';
 import chalk from 'chalk';
 import React from 'react';
-import { render, Text, Box } from 'ink';
+import { join } from 'path';
+import { existsSync } from 'fs';
+import { Box, Text, render } from 'ink';
+
+import { DockerAdapter } from '../adapters/docker-adapter.js';
+import { ServiceStatus, CommandContext, CommandDefinition } from '../types/index.js';
 
 interface ServiceInfo {
   name: string;
@@ -50,7 +51,7 @@ export const statusCommand: CommandDefinition = {
       // Load service adapters
       const adapters = await DockerAdapter.fromCompose(
         composeFile,
-        'supastor',
+        'supastorj',
         context.logger
       );
       
@@ -67,7 +68,7 @@ export const statusCommand: CommandDefinition = {
             name: adapter.name,
             status: status === ServiceStatus.Running ? 'running' : status,
             health: health.healthy ? 'healthy' : health.message || 'unhealthy',
-            ports: info?.ports?.map(p => `${p.PublicPort}:${p.PrivatePort}`).join(', ') || '-',
+            ports: info?.ports?.map(p => p.PublicPort > 0 ? p.PublicPort.toString() : '-').join(', ') || '-',
             uptime: info?.status === 'running' ? formatUptime(info.uptime || 0) : '-',
           });
         } catch (error) {
@@ -88,8 +89,7 @@ export const statusCommand: CommandDefinition = {
         console.log(JSON.stringify(services, null, 2));
       } else if (options.watch) {
         // Interactive watch mode using Ink
-        const StatusTable: React.FC<{ services: ServiceInfo[] }> = ({ services }) => {
-          return React.createElement(
+        const StatusTable: React.FC<{ services: ServiceInfo[] }> = ({ services: serviceList }) => React.createElement(
             Box,
             { flexDirection: 'column' },
             React.createElement(
@@ -101,7 +101,7 @@ export const statusCommand: CommandDefinition = {
               React.createElement(Text, { bold: true }, 'Ports'.padEnd(20)),
               React.createElement(Text, { bold: true }, 'Uptime')
             ),
-            ...services.map(s => 
+            ...serviceList.map(s => 
               React.createElement(
                 Box,
                 { key: s.name },
@@ -116,7 +116,6 @@ export const statusCommand: CommandDefinition = {
               React.createElement(Text, { dimColor: true }, 'Press Ctrl+C to exit')
             )
           );
-        };
         
         const { unmount } = render(React.createElement(StatusTable, { services }));
         
@@ -134,7 +133,7 @@ export const statusCommand: CommandDefinition = {
                 name: adapter.name,
                 status: status === ServiceStatus.Running ? 'running' : status,
                 health: health.healthy ? 'healthy' : health.message || 'unhealthy',
-                ports: info?.ports?.map(p => `${p.PublicPort}:${p.PrivatePort}`).join(', ') || '-',
+                ports: info?.ports?.map(p => p.PublicPort > 0 ? p.PublicPort.toString() : '-').join(', ') || '-',
                 uptime: info?.status === 'running' ? formatUptime(info.uptime || 0) : '-',
               });
             } catch (error) {

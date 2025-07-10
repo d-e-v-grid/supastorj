@@ -14,6 +14,14 @@ export enum Environment {
 }
 
 /**
+ * Deployment mode types
+ */
+export enum DeploymentMode {
+  Docker = 'docker',
+  BareMetal = 'baremetal',
+}
+
+/**
  * Service types
  */
 export enum ServiceType {
@@ -31,6 +39,7 @@ export enum ServiceStatus {
   Stopped = 'stopped',
   Starting = 'starting',
   Stopping = 'stopping',
+  Restarting = 'restarting',
   Error = 'error',
   Unknown = 'unknown',
 }

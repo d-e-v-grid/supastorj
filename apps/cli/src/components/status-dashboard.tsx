@@ -2,10 +2,11 @@
  * Status Dashboard - Interactive TUI component for service monitoring
  */
 
-import React, { useState, useEffect } from 'react';
-import { Box, Text } from 'ink';
 import Table from 'ink-table';
+import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
+import React, { useState, useEffect } from 'react';
+
 import { ServiceStatus, ServiceAdapter } from '../types/index.js';
 
 interface ServiceInfo {

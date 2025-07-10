@@ -1,5 +1,5 @@
 {
-  // Конфигурация Claude Code для проекта Supastor
+  // Конфигурация Claude Code для проекта Supastorj
   
   // Модель AI для использования
   // Возможные значения: "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307", "claude-opus-4-20250514"

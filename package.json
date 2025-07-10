@@ -1,6 +1,14 @@
 {
   "name": "supastorj",
+  "version": "0.1.0",
+  "description": "Modern DevOps platform for Supabase Storage management",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d-e-v-grid/supastorj.git"
+  },
+  "license": "MIT",
+  "author": "DevGrid",
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev",
@@ -16,7 +24,8 @@
     "ai-prompt": "ts-node scripts/gen-aiprompt.ts",
     "publish": "ts-node scripts/publish.ts",
     "link:global": "cd apps/cli && yarn build && npm link",
-    "unlink:global": "cd apps/cli && npm unlink -g @supastorj/cli"
+    "unlink:global": "cd apps/cli && npm unlink -g @supastorj/cli",
+    "typecheck": "turbo typecheck"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.5",

@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFile } from 'fs/promises';
 import { join } from 'path';
 import * as yaml from 'js-yaml';
+import { readFile } from 'fs/promises';
+import { it, expect, describe, beforeEach } from 'vitest';
 
 describe('Docker Compose Configuration', () => {
   const templatePath = join(__dirname, '../templates/docker-compose.yml');
@@ -78,17 +78,17 @@ describe('Docker Compose Configuration', () => {
   });
 
   describe('Network Configuration', () => {
-    it('should have supastor network defined', () => {
-      expect(dockerComposeConfig.networks.supastor).toBeDefined();
-      expect(dockerComposeConfig.networks.supastor.driver).toBe('bridge');
+    it('should have supastorj network defined', () => {
+      expect(dockerComposeConfig.networks.supastorj).toBeDefined();
+      expect(dockerComposeConfig.networks.supastorj.driver).toBe('bridge');
     });
 
-    it('all services should be on supastor network', () => {
+    it('all services should be on supastorj network', () => {
       const services = Object.values(dockerComposeConfig.services) as any[];
       const servicesWithNetwork = services.filter(s => s.networks);
       
       servicesWithNetwork.forEach(service => {
-        expect(service.networks).toContain('supastor');
+        expect(service.networks).toContain('supastorj');
       });
     });
   });

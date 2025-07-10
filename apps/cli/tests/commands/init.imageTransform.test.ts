@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { rm, readFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { mkdtemp } from 'fs/promises';
-import { initCommand } from '../../src/commands/init.js';
+import { rm , mkdtemp, readFile } from 'fs/promises';
+import { it, expect, describe, afterEach, beforeEach } from 'vitest';
+
 import { LoggerImpl } from '../../src/core/logger.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
 import { Environment } from '../../src/types/index.js';
+import { initCommand } from '../../src/commands/init.js';
+import { EventBusImpl } from '../../src/core/event-bus.js';
 
 describe('Init Command - Image Transform', () => {
   let tempDir: string;
@@ -15,7 +15,7 @@ describe('Init Command - Image Transform', () => {
 
   beforeEach(async () => {
     originalCwd = process.cwd();
-    tempDir = await mkdtemp(join(tmpdir(), 'supastor-test-'));
+    tempDir = await mkdtemp(join(tmpdir(), 'supastorj-test-'));
     process.chdir(tempDir);
     
     context = {

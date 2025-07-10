@@ -2,11 +2,12 @@
  * Down command - Stop all services
  */
 
-import { CommandDefinition, CommandContext } from '../types/index.js';
-import { existsSync } from 'fs';
-import { join } from 'path';
 import ora from 'ora';
 import chalk from 'chalk';
+import { join } from 'path';
+import { existsSync } from 'fs';
+
+import { CommandContext, CommandDefinition } from '../types/index.js';
 
 export const downCommand: CommandDefinition = {
   name: 'down',
@@ -39,7 +40,7 @@ export const downCommand: CommandDefinition = {
       }
 
       // Prepare docker-compose command arguments
-      const args = ['-f', composeFile, '-p', 'supastor', 'down'];
+      const args = ['-f', composeFile, '-p', 'supastorj', 'down'];
       
       if (options.volumes) {
         args.push('-v');

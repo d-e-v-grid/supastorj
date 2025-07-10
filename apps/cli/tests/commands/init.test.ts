@@ -2,14 +2,15 @@
  * Init command tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs/promises';
+import * as prompts from '@clack/prompts';
+import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
+
+import { LoggerImpl } from '../../src/core/logger.js';
 import { initCommand } from '../../src/commands/init.js';
 import { CommandContext } from '../../src/types/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
-import { LoggerImpl } from '../../src/core/logger.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
-import * as fs from 'fs/promises';
-import * as prompts from '@clack/prompts';
 
 vi.mock('fs/promises');
 vi.mock('@clack/prompts');
@@ -47,7 +48,7 @@ describe('Init Command', () => {
     // Mock prompts
     vi.mocked(prompts.intro).mockImplementation(() => {});
     vi.mocked(prompts.outro).mockImplementation(() => {});
-    vi.mocked(prompts.text).mockResolvedValue('supastor');
+    vi.mocked(prompts.text).mockResolvedValue('supastorj');
     vi.mocked(prompts.select).mockResolvedValue('development');
     vi.mocked(prompts.confirm).mockResolvedValue(true);
     vi.mocked(prompts.spinner).mockReturnValue({
@@ -74,7 +75,7 @@ describe('Init Command', () => {
 
     // Should create configuration file
     expect(fs.writeFile).toHaveBeenCalledWith(
-      './supastor.config.yaml',
+      './supastorj.config.yaml',
       expect.stringContaining("version: '1.0'"),
       'utf-8'
     );
@@ -117,7 +118,7 @@ describe('Init Command', () => {
     // Should create README.md
     expect(fs.writeFile).toHaveBeenCalledWith(
       'README.md',
-      expect.stringContaining('supastor'),
+      expect.stringContaining('supastorj'),
       'utf-8'
     );
 
@@ -128,7 +129,7 @@ describe('Init Command', () => {
     expect(context.logger.audit).toHaveBeenCalledWith('project_initialized', {
       projectName: 'supastorj',
       environment: 'development',
-      configPath: './supastor.config.yaml',
+      configPath: './supastorj.config.yaml',
     });
   });
 
@@ -221,7 +222,7 @@ describe('Init Command', () => {
 
     // Should create config file
     expect(fs.writeFile).toHaveBeenCalledWith(
-      './supastor.config.yaml',
+      './supastorj.config.yaml',
       expect.any(String),
       'utf-8'
     );
@@ -290,9 +291,9 @@ describe('Init Command', () => {
     const envContent = envCall?.[1] as string;
 
     // Should have MinIO settings for s3 backend
-    expect(envContent).toContain('MINIO_ROOT_USER=supastor');
+    expect(envContent).toContain('MINIO_ROOT_USER=supastorj');
     expect(envContent).toMatch(/MINIO_ROOT_PASSWORD=[\w+/=]+/);
-    expect(envContent).toContain('AWS_ACCESS_KEY_ID=supastor');
+    expect(envContent).toContain('AWS_ACCESS_KEY_ID=supastorj');
     expect(envContent).toMatch(/AWS_SECRET_ACCESS_KEY=[\w+/=]+/);
   });
 

@@ -2,8 +2,9 @@
  * Logger implementation with audit logging support
  */
 
-import winston from 'winston';
 import chalk from 'chalk';
+import winston from 'winston';
+
 import { Logger } from '../types/index.js';
 
 export interface LoggerOptions {
@@ -20,8 +21,8 @@ export class LoggerImpl implements Logger {
     const { level = 'info', auditLog = true, auditLogPath = './logs/audit.log' } = options;
 
     // Console format with colors
-    const consoleFormat = winston.format.printf(({ level, message, timestamp, ...meta }) => {
-      const coloredLevel = this.colorizeLevel(level);
+    const consoleFormat = winston.format.printf(({ level: logLevel, message, timestamp, ...meta }) => {
+      const coloredLevel = this.colorizeLevel(logLevel);
       const formattedMeta = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
       return `${chalk.gray(timestamp)} ${coloredLevel} ${message}${formattedMeta}`;
     });
@@ -115,8 +116,8 @@ export class LoggerImpl implements Logger {
   /**
    * Create a child logger with additional context
    */
-  child(meta: any): Logger {
-    const childWinston = this.logger.child(meta);
+  child(childMeta: any): Logger {
+    const childWinston = this.logger.child(childMeta);
     
     return {
       debug: (message: string, meta?: any) => childWinston.debug(message, meta),

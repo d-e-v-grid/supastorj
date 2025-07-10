@@ -18,8 +18,8 @@ The official command-line interface for Supastorj - a DevOps platform for managi
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/supastor.git
-cd supastor
+git clone https://github.com/yourusername/supastorj.git
+cd supastorj
 
 # Install dependencies
 yarn install
@@ -35,22 +35,22 @@ npm link ./apps/cli
 
 ```bash
 # Initialize a new project
-supastor init
+supastorj init
 
 # Start services
-supastor up
+supastorj up
 
 # View service status
-supastor status
+supastorj status
 
 # View logs
-supastor logs [service-name]
+supastorj logs [service-name]
 
 # Stop services
-supastor down
+supastorj down
 
 # Help
-supastor --help
+supastorj --help
 ```
 
 ## Architecture
@@ -105,7 +105,7 @@ export const myPlugin: Plugin = {
 
 ## Configuration
 
-Supastorj uses a YAML configuration file (`supastor.config.yaml`):
+Supastorj uses a YAML configuration file (`supastorj.config.yaml`):
 
 ```yaml
 version: "1.0"

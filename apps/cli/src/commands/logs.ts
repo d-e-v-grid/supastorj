@@ -2,11 +2,12 @@
  * Logs command - View service logs
  */
 
-import { CommandDefinition, CommandContext } from '../types/index.js';
-import { existsSync } from 'fs';
-import { join } from 'path';
 import chalk from 'chalk';
+import { join } from 'path';
+import { existsSync } from 'fs';
+
 import { DockerAdapter } from '../adapters/docker-adapter.js';
+import { CommandContext, CommandDefinition } from '../types/index.js';
 
 export const logsCommand: CommandDefinition = {
   name: 'logs',
@@ -40,7 +41,7 @@ export const logsCommand: CommandDefinition = {
       // Get service adapters
       const adapters = await DockerAdapter.fromCompose(
         composeFile,
-        'supastor',
+        'supastorj',
         context.logger
       );
 

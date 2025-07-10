@@ -2,18 +2,18 @@
  * Configuration management with environment inheritance
  */
 
-import { readFile, writeFile, access } from 'fs/promises';
-import { constants } from 'fs';
-import { join } from 'path';
-import { load as parseYaml, dump as stringifyYaml } from 'js-yaml';
-import { config as dotenvConfig } from 'dotenv';
 import { z } from 'zod';
+import { constants } from 'fs';
+import { config as dotenvConfig } from 'dotenv';
+import { access, readFile, writeFile } from 'fs/promises';
+import { load as parseYaml, dump as stringifyYaml } from 'js-yaml';
+
 import { 
   CliConfig, 
-  CliConfigSchema, 
   Environment, 
-  EnvironmentConfig,
-  ServiceConfig 
+  ServiceConfig, 
+  CliConfigSchema,
+  EnvironmentConfig 
 } from '../types/index.js';
 
 export interface ConfigManagerOptions {
@@ -30,7 +30,7 @@ export class ConfigManager {
   private envVars: Record<string, string> = {};
 
   constructor(options: ConfigManagerOptions = {}) {
-    this.configPath = options.configPath || './supastor.config.yaml';
+    this.configPath = options.configPath || './supastorj.config.yaml';
     this.envPath = options.envPath || './.env';
     this.environment = options.environment || Environment.Development;
   }
@@ -187,7 +187,7 @@ export class ConfigManager {
               image: 'minio/minio:latest',
               ports: ['${MINIO_PORT:-9000}:9000', '${MINIO_CONSOLE_PORT:-9001}:9001'],
               environment: {
-                MINIO_ROOT_USER: '${MINIO_ROOT_USER:-supastor}',
+                MINIO_ROOT_USER: '${MINIO_ROOT_USER:-supastorj}',
                 MINIO_ROOT_PASSWORD: '${MINIO_ROOT_PASSWORD:-supastor123}',
                 MINIO_DEFAULT_BUCKETS: '${MINIO_DEFAULT_BUCKETS:-storage}',
               },
@@ -224,7 +224,7 @@ export class ConfigManager {
                 STORAGE_S3_ENDPOINT: '${STORAGE_S3_ENDPOINT:-http://minio:9000}',
                 STORAGE_S3_FORCE_PATH_STYLE: '${STORAGE_S3_FORCE_PATH_STYLE:-true}',
                 STORAGE_S3_REGION: '${STORAGE_S3_REGION:-us-east-1}',
-                AWS_ACCESS_KEY_ID: '${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-supastor}}',
+                AWS_ACCESS_KEY_ID: '${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-supastorj}}',
                 AWS_SECRET_ACCESS_KEY: '${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:-supastor123}}',
                 FILE_STORAGE_BACKEND_PATH: '/var/lib/storage',
                 UPLOAD_FILE_SIZE_LIMIT: '${UPLOAD_FILE_SIZE_LIMIT:-524288000}',
@@ -235,7 +235,7 @@ export class ConfigManager {
                 IMAGE_TRANSFORMATION_ENABLED: '${IMAGE_TRANSFORMATION_ENABLED:-true}',
                 IMGPROXY_URL: '${IMGPROXY_URL:-http://imgproxy:8080}',
                 IMGPROXY_REQUEST_TIMEOUT: '${IMGPROXY_REQUEST_TIMEOUT:-15}',
-                TENANT_ID: '${TENANT_ID:-supastor}',
+                TENANT_ID: '${TENANT_ID:-supastorj}',
                 REGION: '${REGION:-us-east-1}',
                 GLOBAL_S3_BUCKET: '${GLOBAL_S3_BUCKET:-}',
               },
@@ -408,9 +408,7 @@ export class ConfigManager {
   private interpolateEnvVars(obj: any): any {
     if (typeof obj === 'string') {
       // Replace ${VAR_NAME} with environment variable value
-      return obj.replace(/\${([^}]+)}/g, (match, varName) => {
-        return this.envVars[varName] || match;
-      });
+      return obj.replace(/\${([^}]+)}/g, (match, varName) => this.envVars[varName] || match);
     }
 
     if (Array.isArray(obj)) {

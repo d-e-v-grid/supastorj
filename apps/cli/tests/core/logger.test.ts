@@ -2,7 +2,8 @@
  * Logger tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { it, vi, expect, describe, beforeEach } from 'vitest';
+
 import { LoggerImpl } from '../../src/core/logger.js';
 
 // Mock winston to avoid actual file writes

@@ -2,7 +2,7 @@
  * Event bus implementation for decoupled communication
  */
 
-import { EventBus, EventHandler, EventType } from '../types/index.js';
+import { EventBus, EventType, EventHandler } from '../types/index.js';
 
 export class EventBusImpl implements EventBus {
   private handlers: Map<EventType, Set<EventHandler>> = new Map();
