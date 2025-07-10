@@ -11,10 +11,11 @@ import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { randomBytes } from 'crypto';
+import { rm } from 'fs/promises';
 
-import { CommandContext } from '../../types/index.js';
+import { CommandContext, StorageBackendType } from '../../types/index.js';
 
-// Simplified production deployment - no longer deploys all services
+// Production deployment with source build support
 
 /**
  * Generate secure random key
@@ -31,7 +32,65 @@ function generateJWTSecret(): string {
 }
 
 /**
- * Generate production configuration - simplified mode for existing infrastructure
+ * Download and build Supabase Storage from GitHub
+ */
+async function downloadAndBuildStorage(
+  context: CommandContext,
+  targetDir: string = './storage'
+): Promise<void> {
+  const spinner = ora('Downloading Supabase Storage source code...');
+  spinner.start();
+  
+  try {
+    // Clean up existing directory
+    if (existsSync(targetDir)) {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+    
+    // Clone the repository
+    spinner.text = 'Cloning Supabase Storage repository...';
+    await execa('git', [
+      'clone',
+      '--depth', '1',
+      '--branch', 'master',
+      'https://github.com/supabase/storage.git',
+      targetDir
+    ]);
+    
+    // Change to storage directory
+    const storageDir = join(process.cwd(), targetDir);
+    
+    // Install dependencies
+    spinner.text = 'Installing dependencies...';
+    await execa('npm', ['install'], {
+      cwd: storageDir,
+      stdio: 'pipe'
+    });
+    
+    // Build the project
+    spinner.text = 'Building storage server...';
+    await execa('npm', ['run', 'build:main'], {
+      cwd: storageDir,
+      stdio: 'pipe'
+    });
+    
+    // Build migrations if needed
+    spinner.text = 'Building database migrations...';
+    await execa('npm', ['run', 'build:migrations'], {
+      cwd: storageDir,
+      stdio: 'pipe'
+    });
+    
+    spinner.succeed('Supabase Storage built successfully');
+    
+  } catch (error: any) {
+    spinner.fail('Failed to build Supabase Storage');
+    throw error;
+  }
+}
+
+/**
+ * Generate production configuration
  */
 async function generateProductionConfig(
   context: CommandContext,
@@ -80,7 +139,7 @@ async function generateProductionConfig(
   // 3. Database URLs
   const databaseUrl = await text({
     message: 'Database URL (PostgreSQL connection string)',
-    placeholder: 'postgresql://user:password@host:port/database',
+    placeholder: 'postgresql://postgres:postgres@127.0.0.1:5432/storage',
     validate: (value) => {
       if (!value) return 'Database URL is required';
       if (!value.startsWith('postgresql://')) {
@@ -92,7 +151,7 @@ async function generateProductionConfig(
   
   const databasePoolUrl = await text({
     message: 'Database Pool URL (PgBouncer connection string)',
-    placeholder: 'postgresql://user:password@host:port/database',
+    placeholder: 'postgresql://postgres:postgres@127.0.0.1:6432/postgres',
     validate: (value) => {
       if (!value) return 'Database Pool URL is required';
       if (!value.startsWith('postgresql://')) {
@@ -106,10 +165,10 @@ async function generateProductionConfig(
   const storageBackend = await select({
     message: 'Storage Backend',
     options: [
-      { value: 'file', label: 'Local File System' },
-      { value: 's3', label: 'S3-Compatible Storage' },
+      { value: StorageBackendType.File, label: 'Local File System' },
+      { value: StorageBackendType.S3, label: 'S3-Compatible Storage' },
     ],
-  }) as string;
+  }) as StorageBackendType;
   
   const envVars: Record<string, string> = {
     // Server
@@ -138,12 +197,13 @@ async function generateProductionConfig(
     TUS_URL_EXPIRY_MS: '3600000',
     
     // Tenant
-    TENANT_ID: 'supastorj',
+    TENANT_ID: options.projectName || 'supastorj',
     REGION: 'us-east-1',
+    PROJECT_NAME: options.projectName || 'supastorj',
   };
   
   // 5. Storage backend specific configuration
-  if (storageBackend === 's3') {
+  if (storageBackend === StorageBackendType.S3) {
     const s3Provider = await select({
       message: 'S3 Provider',
       options: [
@@ -224,7 +284,7 @@ async function generateProductionConfig(
       defaultValue: '/var/lib/storage',
     }) as string;
     
-    envVars['FILE_STORAGE_BACKEND_PATH'] = storagePath;
+    envVars['STORAGE_FILE_BACKEND_PATH'] = storagePath;
   }
   
   // 6. Image transformation
@@ -258,6 +318,7 @@ export interface ProdDeployOptions {
   force?: boolean;
   yes?: boolean;
   skipEnv?: boolean;
+  projectName?: string;
 }
 
 /**
@@ -265,103 +326,55 @@ export interface ProdDeployOptions {
  */
 async function createProductionScripts(
   envVars: Record<string, string>,
-  envPath: string
+  options: { useDocker?: boolean } = {}
 ): Promise<void> {
-  // Create startup script
-  const startScript = `#!/bin/bash
-# Supastorj Storage API Start Script
-# Generated on ${new Date().toISOString()}
-
-set -e
-
-# Load environment variables
-if [ -f "${envPath}" ]; then
-  export $(cat "${envPath}" | grep -v '^#' | xargs)
-else
-  echo "Error: ${envPath} not found"
-  exit 1
-fi
-
-# Check if storage-api is already running
-if pgrep -f "supabase/storage-api" > /dev/null; then
-  echo "Storage API is already running"
-  exit 0
-fi
-
-echo "Starting Supabase Storage API..."
-
-# Pull latest storage-api image
-docker pull supabase/storage-api:v1.13.1
-
-# Create necessary directories
-mkdir -p /var/lib/storage
-mkdir -p /var/log/storage-api
-
-# Start storage-api container
-docker run -d \\
-  --name storage-api \\
-  --restart unless-stopped \\
-  --network host \\
-  -v /var/lib/storage:/var/lib/storage \\
-  -v /var/log/storage-api:/var/log \\
-  --env-file "${envPath}" \\
-  -e SERVER_PORT=$SERVER_PORT \\
-  -e SERVER_HOST=$SERVER_HOST \\
-  supabase/storage-api:v1.13.1
-
-echo "Storage API started successfully"
-echo "Check logs: docker logs -f storage-api"
-echo "API available at: http://$SERVER_HOST:$SERVER_PORT"
-`;
-
-  // Create shutdown script
-  const stopScript = `#!/bin/bash
-# Supastorj Storage API Stop Script
-# Generated on ${new Date().toISOString()}
-
-set -e
-
-echo "Stopping Supabase Storage API..."
-
-# Stop and remove container
-if docker ps -a | grep -q storage-api; then
-  docker stop storage-api || true
-  docker rm storage-api || true
-  echo "Storage API stopped"
-else
-  echo "Storage API is not running"
-fi
-`;
-
-  // Create systemd service (optional)
-  const systemdService = `[Unit]
-Description=Supabase Storage API
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-Restart=always
-RestartSec=10
-EnvironmentFile=${envPath}
-ExecStartPre=-/usr/bin/docker stop storage-api
-ExecStartPre=-/usr/bin/docker rm storage-api
-ExecStart=/usr/bin/docker run --rm --name storage-api \\
-  --network host \\
-  -v /var/lib/storage:/var/lib/storage \\
-  -v /var/log/storage-api:/var/log \\
-  --env-file ${envPath} \\
-  supabase/storage-api:v1.13.1
-ExecStop=/usr/bin/docker stop storage-api
-
-[Install]
-WantedBy=multi-user.target
-`;
-
-  // Write scripts
-  await writeFile('./start-storage.sh', startScript, { mode: 0o755 });
-  await writeFile('./stop-storage.sh', stopScript, { mode: 0o755 });
-  await writeFile('./storage-api.service', systemdService);
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const templatesDir = join(__dirname, '../../../templates');
+  
+  // Update env vars to indicate Docker usage
+  if (options.useDocker) {
+    envVars['USE_DOCKER'] = 'true';
+  } else {
+    envVars['USE_DOCKER'] = 'false';
+  }
+  
+  // Copy script templates
+  const scriptFiles = ['start-storage.sh', 'stop-storage.sh'];
+  for (const file of scriptFiles) {
+    const sourcePath = join(templatesDir, file);
+    const destPath = join('./', file);
+    
+    const content = await readFile(sourcePath, 'utf-8');
+    await writeFile(destPath, content, { mode: 0o755 });
+  }
+  
+  // Create systemd service from template
+  const serviceTemplate = await readFile(join(templatesDir, 'supastorj.service'), 'utf-8');
+  const workDir = process.cwd();
+  
+  // Simple template replacement
+  let serviceContent = serviceTemplate
+    .replace(/{{systemUser}}/g, process.env['USER'] || 'root')
+    .replace(/{{systemGroup}}/g, process.env['USER'] || 'root')
+    .replace(/{{workingDirectory}}/g, workDir);
+  
+  // Handle conditional sections
+  if (options.useDocker) {
+    serviceContent = serviceContent
+      .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, (match) => 
+        match.replace(/{{#useDocker}}\n?/, '').replace(/\n?{{\/useDocker}}/, '')
+      )
+      .replace(/{{#useSource}}[\s\S]*?{{\/useSource}}/g, '');
+  } else {
+    serviceContent = serviceContent
+      .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, '')
+      .replace(/{{#useSource}}[\s\S]*?{{\/useSource}}/g, (match) => 
+        match.replace(/{{#useSource}}\n?/, '').replace(/\n?{{\/useSource}}/, '')
+      );
+  }
+  
+  await writeFile('./supastorj.service', serviceContent);
 }
 
 export async function deployProdEnvironment(
@@ -369,9 +382,20 @@ export async function deployProdEnvironment(
   options: ProdDeployOptions
 ): Promise<void> {
   try {
-    const { intro, outro } = await import('@clack/prompts');
+    const { intro, outro, confirm } = await import('@clack/prompts');
     
     intro(chalk.cyan('🚀 Supastorj Production Deployment'));
+    
+    // Ask if user wants to build from source
+    const buildFromSource = await confirm({
+      message: 'Build Supabase Storage from source? (recommended for production)',
+      initialValue: true,
+    });
+    
+    if (buildFromSource) {
+      // Download and build storage
+      await downloadAndBuildStorage(context);
+    }
     
     // Generate production configuration
     const envVars = await generateProductionConfig(context, options);
@@ -427,89 +451,56 @@ export async function deployProdEnvironment(
       }
     }
     
-    // Save configuration
-    const envPath = join(process.cwd(), '.env.storage');
+    // Save configuration as .env (not .env.storage)
+    const envPath = join(process.cwd(), '.env');
     await writeFile(envPath, updatedLines.join('\n'), 'utf-8');
     await chmod(envPath, 0o600);
     
-    context.logger.info(chalk.green('✅ Created .env.storage'));
+    context.logger.info(chalk.green('✅ Created .env'));
     
     // Create startup/shutdown scripts
-    await createProductionScripts(envVars, envPath);
+    await createProductionScripts(envVars, { useDocker: !buildFromSource });
     
     context.logger.info(chalk.green('✅ Created start-storage.sh'));
     context.logger.info(chalk.green('✅ Created stop-storage.sh'));
-    context.logger.info(chalk.green('✅ Created storage-api.service'));
+    context.logger.info(chalk.green('✅ Created supastorj.service'));
     
-    // Create deployment README
-    const readmeContent = `# Supastorj Storage API Deployment
-
-## Configuration
-Configuration is stored in \`.env.storage\`
-
-## Quick Start
-
-### Using Docker
-\`\`\`bash
-# Start the storage API
-./start-storage.sh
-
-# Stop the storage API
-./stop-storage.sh
-
-# View logs
-docker logs -f storage-api
-\`\`\`
-
-### Using systemd (recommended)
-\`\`\`bash
-# Copy service file
-sudo cp storage-api.service /etc/systemd/system/
-
-# Reload systemd
-sudo systemctl daemon-reload
-
-# Enable auto-start
-sudo systemctl enable storage-api
-
-# Start service
-sudo systemctl start storage-api
-
-# Check status
-sudo systemctl status storage-api
-
-# View logs
-sudo journalctl -u storage-api -f
-\`\`\`
-
-## API Endpoints
-- Health check: http://${envVars['SERVER_HOST']}:${envVars['SERVER_PORT']}/health
-- Storage API: http://${envVars['SERVER_HOST']}:${envVars['SERVER_PORT']}/
-
-## Security Notes
-- Keep \`.env.storage\` secure (mode 600)
-- Generated keys:
-  - JWT Secret: ${envVars['AUTH_JWT_SECRET']?.substring(0, 8) || 'N/A'}...
-  - Anon Key: ${envVars['ANON_KEY']?.substring(0, 8) || 'N/A'}...
-  - Service Key: ${envVars['SERVICE_KEY']?.substring(0, 8) || 'N/A'}...
-
-## Troubleshooting
-- Check logs: \`docker logs storage-api\`
-- Verify connectivity to PostgreSQL
-- Ensure S3/storage backend is accessible
-- Check firewall rules for port ${envVars['SERVER_PORT']}
-`;
+    // Create deployment README from template
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const templatesDir = join(__dirname, '../../../templates');
+    const readmeTemplate = await readFile(join(templatesDir, 'README-DEPLOYMENT.md'), 'utf-8');
+    
+    const readmeContent = readmeTemplate
+      .replace(/{{serverHost}}/g, envVars['SERVER_HOST'] || '0.0.0.0')
+      .replace(/{{serverPort}}/g, envVars['SERVER_PORT'] || '5000')
+      .replace(/{{jwtSecretPreview}}/g, envVars['AUTH_JWT_SECRET']?.substring(0, 8) || 'N/A')
+      .replace(/{{anonKeyPreview}}/g, envVars['ANON_KEY']?.substring(0, 8) || 'N/A')
+      .replace(/{{serviceKeyPreview}}/g, envVars['SERVICE_KEY']?.substring(0, 8) || 'N/A');
     
     await writeFile('README-DEPLOYMENT.md', readmeContent, 'utf-8');
     context.logger.info(chalk.green('✅ Created README-DEPLOYMENT.md'));
+    
+    // Create project mode artifact
+    const modeArtifact = {
+      mode: 'production',
+      createdAt: new Date().toISOString(),
+      projectName: options.projectName || 'supastorj',
+      storageBackend: envVars['STORAGE_BACKEND'] || 's3',
+      buildFromSource: buildFromSource,
+      databaseUrl: envVars['DATABASE_URL'] ? 'configured' : 'not-configured',
+    };
+    
+    await mkdir('.supastorj', { recursive: true });
+    await writeFile('.supastorj/project.json', JSON.stringify(modeArtifact, null, 2), 'utf-8');
     
     outro(chalk.green(`
 ✅ Production deployment configured successfully!
 
 Next steps:
-1. Review configuration in ${chalk.cyan('.env.storage')}
+1. Review configuration in ${chalk.cyan('.env')}
 2. Start the Storage API: ${chalk.cyan('./start-storage.sh')}
-3. Check logs: ${chalk.cyan('docker logs -f storage-api')}
+3. Check logs: ${chalk.cyan('tail -f logs/storage-api.log')}
 
 For systemd deployment, see README-DEPLOYMENT.md
 `));

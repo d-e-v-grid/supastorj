@@ -1,0 +1,32 @@
+[Unit]
+Description=Supastorj Storage API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User={{systemUser}}
+Group={{systemGroup}}
+WorkingDirectory={{workingDirectory}}
+Environment="NODE_ENV=production"
+EnvironmentFile={{workingDirectory}}/.env
+
+# For Docker deployment
+{{#useDocker}}
+ExecStart=/usr/bin/docker run --rm --name storage-api -p ${SERVER_PORT}:5000 --env-file {{workingDirectory}}/.env -v {{workingDirectory}}/logs:/app/logs -v {{workingDirectory}}/data/storage:/var/lib/storage supabase/storage-api:v1.13.1
+ExecStop=/usr/bin/docker stop storage-api
+{{/useDocker}}
+
+# For source deployment
+{{#useSource}}
+ExecStart=/usr/bin/node {{workingDirectory}}/storage/dist/main/index.js
+{{/useSource}}
+
+Restart=always
+RestartSec=10
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

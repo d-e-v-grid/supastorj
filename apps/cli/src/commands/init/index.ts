@@ -1,5 +1,5 @@
 /**
- * Deploy command - Deploy Supastorj in dev or production mode
+ * Init command - Initialize Supastorj project in dev or production mode
  */
 
 import chalk from 'chalk';
@@ -7,15 +7,15 @@ import { join } from 'path';
 import dotenv from 'dotenv';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
-import { select } from '@clack/prompts';
+import { select, text } from '@clack/prompts';
 
 import { CommandContext, CommandDefinition } from '../../types/index.js';
 import { DevDeployOptions, deployDevEnvironment } from './dev-environment.js';
 import { ProdDeployOptions, deployProdEnvironment } from './prod-environment.js';
 
-export const deployCommand: CommandDefinition = {
-  name: 'deploy',
-  description: 'Deploy Supastorj environment (dev with Docker or production on bare metal)',
+export const initCommand: CommandDefinition = {
+  name: 'init',
+  description: 'Initialize Supastorj project (dev with Docker or production on bare metal)',
   options: [
     {
       flags: '--mode <mode>',
@@ -59,13 +59,23 @@ export const deployCommand: CommandDefinition = {
   ],
   action: async (context: CommandContext, options: any) => {
     try {
-      // Determine deployment mode
+      // Determine initialization mode
       let mode = options.mode;
+      
+      // First, always ask for project name unless in yes mode
+      let projectName = 'supastorj';
+      if (!options.yes) {
+        projectName = await text({
+          message: 'Project name:',
+          placeholder: 'supastorj',
+          defaultValue: 'supastorj',
+        }) as string;
+      }
       
       // If mode is not explicitly set, ask the user
       if (!options.yes && !['dev', 'prod'].includes(mode)) {
         mode = await select({
-          message: 'Select deployment mode:',
+          message: 'Select project mode:',
           options: [
             { value: 'dev', label: 'Development (Docker Compose)' },
             { value: 'prod', label: 'Production (Bare Metal)' },
@@ -79,7 +89,7 @@ export const deployCommand: CommandDefinition = {
         process.exit(1);
       }
 
-      console.log(chalk.cyan(`\n🚀 Deploying in ${mode.toUpperCase()} mode\n`));
+      console.log(chalk.cyan(`\n🚀 Initializing project in ${mode.toUpperCase()} mode\n`));
 
       if (mode === 'dev') {
         // Development mode - Docker Compose deployment
@@ -88,6 +98,7 @@ export const deployCommand: CommandDefinition = {
           yes: options.yes,
           skipEnv: options.skipEnv,
           noImageTransform: options.noImageTransform,
+          projectName: projectName,
         };
 
         await deployDevEnvironment(context, devOptions);
@@ -100,19 +111,20 @@ export const deployCommand: CommandDefinition = {
           force: options.force,
           yes: options.yes,
           skipEnv: options.skipEnv,
+          projectName: projectName,
         };
 
         await deployProdEnvironment(context, prodOptions);
       }
 
       // Log audit event
-      context.logger.audit('deployment_completed', {
+      context.logger.audit('project_initialized', {
         mode,
         options,
       });
 
     } catch (error: any) {
-      context.logger.error('Deployment failed:', error.message);
+      context.logger.error('Initialization failed:', error.message);
       process.exit(1);
     }
   },

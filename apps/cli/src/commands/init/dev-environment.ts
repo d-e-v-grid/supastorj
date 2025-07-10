@@ -11,7 +11,7 @@ import { mkdir, access, copyFile, writeFile, constants } from 'fs/promises';
 import { text, intro, outro, select, confirm, spinner } from '@clack/prompts';
 
 import { ConfigManager } from '../../config/config-manager.js';
-import { Environment, CommandContext } from '../../types/index.js';
+import { Environment, CommandContext, StorageBackendType } from '../../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,7 +57,7 @@ export interface DevDeployOptions {
   yes?: boolean;
   skipEnv?: boolean;
   noImageTransform?: boolean;
-  storageBackend?: 'file' | 's3';
+  storageBackend?: StorageBackendType;
   projectName?: string;
 }
 
@@ -92,25 +92,19 @@ export async function deployDevEnvironment(
   
   // Get project configuration
   let projectName = options.projectName || 'supastorj';
-  let storageBackend = options.storageBackend || 'file';
+  let storageBackend = options.storageBackend || StorageBackendType.File;
   
   // In dev environment, always use Development environment
   const environment = Environment.Development;
   
   if (!yes) {
-    projectName = await text({
-      message: 'Project name:',
-      placeholder: 'supastorj',
-      defaultValue: 'supastorj',
-    }) as string;
-    
     storageBackend = await select({
       message: 'Storage backend:',
       options: [
-        { value: 'file', label: 'File System (local storage)' },
-        { value: 's3', label: 'S3 Compatible (MinIO)' },
+        { value: StorageBackendType.File, label: 'File System (local storage)' },
+        { value: StorageBackendType.S3, label: 'S3 Compatible (MinIO)' },
       ],
-    }) as 'file' | 's3';
+    }) as StorageBackendType;
     
     // Ask about image transformation
     const enableImageTransformation = await confirm({
@@ -125,8 +119,18 @@ export async function deployDevEnvironment(
   s.start('Generating configuration files...');
   
   try {
-    // Generate default configuration
-    const config = ConfigManager.generateDefault();
+    // Generate default configuration based on selected storage mode
+    const config = ConfigManager.generateDefault(storageBackend);
+    config.projectName = projectName;
+    config.environment = environment;
+    
+    // Enable imgproxy if requested
+    if (!options.noImageTransform && config.services) {
+      config.services.imgproxy = {
+        enabled: true,
+        port: 8080,
+      };
+    }
     
     // Write configuration file
     await ensureDirectory(configPath);
@@ -169,7 +173,7 @@ export async function deployDevEnvironment(
       };
       
       // Add S3-specific settings only if s3 backend is selected
-      if (storageBackend === 's3') {
+      if (storageBackend === StorageBackendType.S3) {
         Object.assign(envVars, {
           // MinIO (S3-compatible storage)
           MINIO_ROOT_USER: 'supastorj',
@@ -237,127 +241,56 @@ export async function deployDevEnvironment(
         .join('\n') + '\n';
       
       await writeFile(envPath, envContent, 'utf-8');
-      
-      // Also create .env.example
-      const exampleVars = { ...envVars };
-      Object.keys(exampleVars).forEach(key => {
-        if (key.includes('KEY') || key.includes('SECRET') || key.includes('PASSWORD')) {
-          exampleVars[key] = '<your-secret-here>';
-        }
-      });
-      
-      const exampleContent = Object.entries(exampleVars)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('\n') + '\n';
-      
-      await writeFile('.env.example', exampleContent, 'utf-8');
     }
     
     // Create directory structure
     const directories = [
-      './data/postgres',
-      './data/storage',
       './logs',
-      './templates',
       './plugins',
-      './config/postgres',
     ];
     
     for (const dir of directories) {
       await mkdir(dir, { recursive: true });
     }
     
-    // Create PostgreSQL initialization script
-    const postgresInitContent = `
--- Initialize database for Supabase Storage
--- This script runs when the postgres container is first created
-
--- Create extensions needed for Supabase Storage
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- Create storage schema if it doesn't exist
-CREATE SCHEMA IF NOT EXISTS storage;
-
--- Grant permissions to the postgres user
-GRANT ALL ON SCHEMA storage TO postgres;
-GRANT CREATE ON DATABASE storage TO postgres;
-
--- Ensure postgres user has necessary permissions
-ALTER USER postgres WITH SUPERUSER;
-`.trim();
+    // Copy template files
+    const templatesDir = join(__dirname, '../../../templates');
+    const templateFiles = [
+      { src: '.gitignore', dest: '.gitignore' },
+      { src: 'README.md', dest: 'README.md' },
+    ];
     
-    await writeFile('./config/postgres/01-init.sql', postgresInitContent, 'utf-8');
+    for (const { src, dest } of templateFiles) {
+      const sourcePath = join(templatesDir, src);
+      const destPath = join('./', dest);
+      
+      try {
+        const { readFile } = await import('fs/promises');
+        let content = await readFile(sourcePath, 'utf-8');
+        
+        // Replace template variables
+        content = content.replace(/{{projectName}}/g, projectName);
+        
+        await writeFile(destPath, content, 'utf-8');
+        context.logger.debug(`Created ${dest} from template`);
+      } catch (error) {
+        context.logger.warn(`Failed to copy template ${src}:`, error);
+      }
+    }
     
-    // Create .gitignore
-    const gitignoreContent = `
-# Environment files
-.env
-.env.local
-.env.*.local
-
-# Data directories
-data/
-logs/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Node modules
-node_modules/
-
-# Build outputs
-dist/
-build/
-*.log
-`.trim();
+    // Create project mode artifact
+    const modeArtifact = {
+      mode: 'development',
+      createdAt: new Date().toISOString(),
+      projectName: projectName,
+      storageBackend: storageBackend,
+      imageTransformEnabled: !options.noImageTransform,
+    };
     
-    await writeFile('.gitignore', gitignoreContent, 'utf-8');
-    
-    // Create README
-    const readmeContent = `
-# ${projectName}
-
-A Supastorj project for managing Supabase Storage.
-
-## Getting Started
-
-1. Review and update the configuration in \`supastorj.config.yaml\`
-2. Update environment variables in \`.env\`
-3. Start the services:
-
-\`\`\`bash
-supastorj up
-\`\`\`
-
-## Commands
-
-- \`supastorj up\` - Start all services
-- \`supastorj down\` - Stop all services
-- \`supastorj status\` - View service status
-- \`supastorj logs [service]\` - View service logs
-- \`supastorj --help\` - View all available commands
-
-## Configuration
-
-Edit \`supastorj.config.yaml\` to customize your deployment.
-
-## License
-
-[Your License Here]
-`.trim();
-    
-    await writeFile('README.md', readmeContent, 'utf-8');
+    await ensureDirectory('.supastorj/project.json');
+    await writeFile('.supastorj/project.json', JSON.stringify(modeArtifact, null, 2), 'utf-8');
     
     // Copy docker-compose template
-    const templatesDir = join(__dirname, '../../../templates');
     const composeFile = 'docker-compose.yml';
     
     const sourcePath = join(templatesDir, composeFile);
@@ -386,9 +319,9 @@ Edit \`supastorj.config.yaml\` to customize your deployment.
 Next steps:
 1. Review the configuration in ${chalk.cyan('supastorj.config.yaml')}
 2. Update environment variables in ${chalk.cyan('.env')}
-3. Run ${chalk.cyan('supastorj up')} to start the services${
+3. Run ${chalk.cyan('supastorj start')} to start the services${
   options.noImageTransform ? '' : `
-4. To include image transformation, run ${chalk.cyan('supastorj up --profile imgproxy')}`
+4. To include image transformation, run ${chalk.cyan('supastorj start --profile imgproxy')}`
 }
 
 Happy coding! 🎉

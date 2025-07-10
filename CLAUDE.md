@@ -55,9 +55,9 @@ supastorj/
 ## Key Commands
 
 ### CLI Commands
-- `supastorj deploy` - Deploy environment (dev/prod) - initializes project and configuration
-- `supastorj up` - Start services
-- `supastorj down` - Stop services
+- `supastorj init` - Iinitializes project and configuration
+- `supastorj start` - Start services
+- `supastorj stop` - Stop services
 - `supastorj status` - Show service status (TUI dashboard)
 - `supastorj logs` - View service logs
 - `supastorj debug` - Debug information
@@ -149,7 +149,6 @@ supastorj/
 ## Environment Variables
 
 Key environment variables managed by the system:
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` - Database credentials
 - `JWT_SECRET`, `ANON_KEY`, `SERVICE_KEY` - Authentication keys
 - `STORAGE_BACKEND` - Storage backend (file/s3)
 - `IMAGE_TRANSFORMATION_ENABLED` - Enable imgproxy service

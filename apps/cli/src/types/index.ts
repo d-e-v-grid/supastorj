@@ -22,6 +22,14 @@ export enum DeploymentMode {
 }
 
 /**
+ * Storage backend types
+ */
+export enum StorageBackendType {
+  File = 'file',
+  S3 = 's3',
+}
+
+/**
  * Service types
  */
 export enum ServiceType {
@@ -103,16 +111,30 @@ export const EnvironmentConfigSchema = z.object({
 export type EnvironmentConfig = z.infer<typeof EnvironmentConfigSchema>;
 
 /**
- * CLI configuration
+ * CLI configuration - simplified for project-specific needs
  */
 export const CliConfigSchema = z.object({
   version: z.string(),
-  environments: z.record(EnvironmentConfigSchema),
-  plugins: z.array(z.string()).optional(),
+  projectName: z.string(),
+  environment: z.nativeEnum(Environment).default(Environment.Development),
+  storageBackend: z.nativeEnum(StorageBackendType).default(StorageBackendType.File),
+  services: z.object({
+    postgres: z.object({
+      enabled: z.boolean().default(true),
+      port: z.number().default(5432),
+    }).optional(),
+    storage: z.object({
+      enabled: z.boolean().default(true),
+      port: z.number().default(5000),
+    }).optional(),
+    imgproxy: z.object({
+      enabled: z.boolean().default(false),
+      port: z.number().default(8080),
+    }).optional(),
+  }).optional(),
   settings: z.object({
-    logLevel: z.enum(['debug', 'info', 'warn', 'error']).optional(),
-    auditLog: z.boolean().optional(),
-    telemetry: z.boolean().optional(),
+    logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+    auditLog: z.boolean().default(false),
   }).optional(),
 });
 
@@ -190,6 +212,7 @@ export interface LogOptions {
   tail?: number;
   since?: Date;
   until?: Date;
+  signal?: AbortSignal;
 }
 
 /**

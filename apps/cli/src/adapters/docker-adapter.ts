@@ -196,7 +196,7 @@ export class DockerAdapter implements ServiceAdapter {
    * Get service logs
    */
   async *logs(options: LogOptions = {}): AsyncIterable<string> {
-    const { follow = false, tail = 100, since, until } = options;
+    const { follow = false, tail = 100, since, until, signal } = options;
     
     try {
       const containerName = `${this.projectName}-${this.name}-1`;
@@ -222,9 +222,56 @@ export class DockerAdapter implements ServiceAdapter {
         
         const stream = await container.logs(logOptions);
         
-        // Handle as Node.js stream
-        for await (const chunk of stream as NodeJS.ReadableStream) {
-          yield this.parseLogChunk(chunk as Buffer);
+        // Handle as Node.js stream with abort signal support
+        const readable = stream as NodeJS.ReadableStream;
+        
+        // Set up abort handling
+        if (signal) {
+          const abortHandler = () => {
+            // Destroy the stream when aborted
+            if ('destroy' in readable && typeof readable.destroy === 'function') {
+              readable.destroy();
+            }
+            // Also try to unpipe to ensure complete cleanup
+            if ('unpipe' in readable && typeof readable.unpipe === 'function') {
+              readable.unpipe();
+            }
+            // Emit end to ensure iteration stops
+            if ('emit' in readable && typeof readable.emit === 'function') {
+              readable.emit('end');
+            }
+          };
+          
+          signal.addEventListener('abort', abortHandler, { once: true });
+          
+          // Clean up the handler if stream ends naturally
+          readable.once('end', () => {
+            signal.removeEventListener('abort', abortHandler);
+          });
+        }
+        
+        try {
+          for await (const chunk of readable) {
+            // Check if we should stop
+            if (signal?.aborted) {
+              break;
+            }
+            yield this.parseLogChunk(chunk as Buffer);
+          }
+        } catch (error: any) {
+          // Ignore errors caused by stream destruction
+          if (error.message?.includes('stream.push() after EOF') || 
+              error.message?.includes('Premature close') ||
+              error.code === 'ERR_STREAM_DESTROYED' ||
+              signal?.aborted) {
+            return;
+          }
+          throw error;
+        } finally {
+          // Ensure stream is cleaned up
+          if ('destroy' in readable && typeof readable.destroy === 'function') {
+            readable.destroy();
+          }
         }
       } else {
         // For non-following logs, follow must be false or undefined

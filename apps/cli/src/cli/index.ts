@@ -8,16 +8,16 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { readFile } from 'fs/promises';
 
-import { upCommand } from '../commands/up.js';
 import { LoggerImpl } from '../core/logger.js';
 // Import commands
-import { downCommand } from '../commands/down.js';
-import { logsCommand } from '../commands/logs.js';
-import { EventBusImpl } from '../core/event-bus.js';
-import { debugCommand } from '../commands/debug.js';
+import { initCommand } from '../commands/init/index.js';
+import { startCommand } from '../commands/start.js';
+import { stopCommand } from '../commands/stop.js';
 import { statusCommand } from '../commands/status.js';
+import { logsCommand } from '../commands/logs.js';
+import { debugCommand } from '../commands/debug.js';
+import { EventBusImpl } from '../core/event-bus.js';
 import { PluginManager } from '../core/plugin-manager.js';
-import { deployCommand } from '../commands/deploy/index.js';
 import { ConfigManager } from '../config/config-manager.js';
 import { Environment, CommandContext } from '../types/index.js';
 
@@ -58,9 +58,9 @@ class SupastorCLI {
       });
 
     // Add commands
-    this.addCommand(deployCommand);
-    this.addCommand(upCommand);
-    this.addCommand(downCommand);
+    this.addCommand(initCommand);
+    this.addCommand(startCommand);
+    this.addCommand(stopCommand);
     this.addCommand(statusCommand);
     this.addCommand(logsCommand);
     this.addCommand(debugCommand);
@@ -141,7 +141,28 @@ class SupastorCLI {
     // Add action
     command.action(async (...args) => {
       try {
-        await commandDef.action(this.context!, ...args);
+        // For commands with variadic arguments, the last arg is always options
+        if (commandDef.name === 'logs') {
+          // Commander passes [services, command] when variadic args are present
+          // where 'command' is the Command object that contains options
+          if (args.length === 0) {
+            // No arguments at all - shouldn't happen
+            await commandDef.action(this.context!, {}, undefined);
+          } else if (args.length === 1) {
+            // Only command object (no services specified)
+            const cmdObj = args[0];
+            const options = cmdObj.opts ? cmdObj.opts() : cmdObj;
+            await commandDef.action(this.context!, options, undefined);
+          } else {
+            // Services and command object
+            const services = args[0];
+            const cmdObj = args[args.length - 1];
+            const options = cmdObj.opts ? cmdObj.opts() : cmdObj;
+            await commandDef.action(this.context!, options, services);
+          }
+        } else {
+          await commandDef.action(this.context!, ...args);
+        }
       } catch (error) {
         this.handleError(error);
       }
