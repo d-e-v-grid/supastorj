@@ -93,24 +93,16 @@ export const deployCommand: CommandDefinition = {
         await deployDevEnvironment(context, devOptions);
       } else {
         // Production mode - Bare metal deployment
-        // Check for .env file
-        const envPath = join(process.cwd(), '.env');
-        if (!existsSync(envPath)) {
-          context.logger.error('No .env file found. Run "supastorj deploy --mode dev" first to generate configuration.');
-          process.exit(1);
-        }
-
-        // Load environment variables
-        const envContent = await readFile(envPath, 'utf-8');
-        const envVars = dotenv.parse(envContent);
-
         const prodOptions: ProdDeployOptions = {
           skipDeps: options.skipDeps,
           services: options.services,
           dryRun: options.dryRun,
+          force: options.force,
+          yes: options.yes,
+          skipEnv: options.skipEnv,
         };
 
-        await deployProdEnvironment(context, prodOptions, envVars);
+        await deployProdEnvironment(context, prodOptions);
       }
 
       // Log audit event

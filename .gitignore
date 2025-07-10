@@ -26,6 +26,7 @@ coverage/
 .env.*
 !.env.example
 !.env.template
+!.env.storage
 
 # IDE
 .vscode/*
