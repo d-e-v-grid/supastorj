@@ -5,7 +5,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
     "moduleResolution": "bundler",
     "module": "ESNext",
     "target": "ES2023",

@@ -3,11 +3,7 @@
  */
 
 import chalk from 'chalk';
-import { join } from 'path';
-import dotenv from 'dotenv';
-import { existsSync } from 'fs';
-import { readFile } from 'fs/promises';
-import { select, text } from '@clack/prompts';
+import { text, select } from '@clack/prompts';
 
 import { CommandContext, CommandDefinition } from '../../types/index.js';
 import { DevDeployOptions, deployDevEnvironment } from './dev-environment.js';
@@ -98,7 +94,7 @@ export const initCommand: CommandDefinition = {
           yes: options.yes,
           skipEnv: options.skipEnv,
           noImageTransform: options.noImageTransform,
-          projectName: projectName,
+          projectName,
         };
 
         await deployDevEnvironment(context, devOptions);
@@ -111,7 +107,7 @@ export const initCommand: CommandDefinition = {
           force: options.force,
           yes: options.yes,
           skipEnv: options.skipEnv,
-          projectName: projectName,
+          projectName,
         };
 
         await deployProdEnvironment(context, prodOptions);

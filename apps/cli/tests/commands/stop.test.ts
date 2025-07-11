@@ -1,12 +1,12 @@
 /**
- * Down command tests
+ * Stop command tests
  */
 
 import * as fs from 'fs';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
-import { downCommand } from '../../src/commands/down.js';
+import { stopCommand } from '../../src/commands/stop.js';
 import { CommandContext } from '../../src/types/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
@@ -71,17 +71,17 @@ describe('Down Command', () => {
   });
 
   it('should have correct command definition', () => {
-    expect(downCommand.name).toBe('down');
-    expect(downCommand.description).toContain('Stop all services');
-    expect(downCommand.options).toBeDefined();
-    expect(downCommand.options).toHaveLength(3);
+    expect(stopCommand.name).toBe('down');
+    expect(stopCommand.description).toContain('Stop all services');
+    expect(stopCommand.options).toBeDefined();
+    expect(stopCommand.options).toHaveLength(3);
   });
 
   it('should check for docker-compose.yml', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     
     try {
-      await downCommand.action(context, {});
+      await stopCommand.action(context, {});
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }
@@ -96,7 +96,7 @@ describe('Down Command', () => {
     const options = { volumes: false, removeOrphans: false };
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -113,7 +113,7 @@ describe('Down Command', () => {
     const options = { volumes: true };
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -130,7 +130,7 @@ describe('Down Command', () => {
     const options = { removeOrphans: true };
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -143,7 +143,7 @@ describe('Down Command', () => {
     const options = { rmi: 'all' };
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -164,7 +164,7 @@ describe('Down Command', () => {
     };
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -183,7 +183,7 @@ describe('Down Command', () => {
     vi.mocked(execa).mockRejectedValue(new Error('Docker not found'));
     
     try {
-      await downCommand.action(context, options);
+      await stopCommand.action(context, options);
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }
@@ -198,7 +198,7 @@ describe('Down Command', () => {
   it('should show success message', async () => {
     const options = {};
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     expect(mockSpinner.succeed).toHaveBeenCalledWith(
       'Services stopped successfully'
@@ -212,7 +212,7 @@ describe('Down Command', () => {
     vi.mocked(execa).mockRejectedValue(new Error('Failed'));
     
     try {
-      await downCommand.action(context, options);
+      await stopCommand.action(context, options);
     } catch (error: any) {
       // Expected
     }
@@ -226,7 +226,7 @@ describe('Down Command', () => {
     const options = {};
     const { execa } = await import('execa');
     
-    await downCommand.action(context, options);
+    await stopCommand.action(context, options);
 
     const args = vi.mocked(execa).mock.calls[0][1];
     const projectIndex = args.indexOf('-p');

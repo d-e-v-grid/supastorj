@@ -5,7 +5,7 @@ import { it, expect, describe, afterEach, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
 import { Environment } from '../../src/types/index.js';
-import { initCommand } from '../../src/commands/init.js';
+import { initCommand } from '../../src/commands/init/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
 
 describe('Init Command - Image Transform', () => {

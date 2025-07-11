@@ -2,6 +2,7 @@
  * Debug command - Debug container issues
  */
 
+import { $ } from 'zx';
 import chalk from 'chalk';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -74,13 +75,10 @@ export const debugCommand: CommandDefinition = {
           console.log(chalk.cyan('\nConfiguration Check:'));
           
           try {
-            const { execa } = await import('execa');
-            const { stdout } = await execa('docker', [
-              'inspect',
-              `supastorj-${adapter.name}-1`,
-              '--format',
-              '{{json .Config.Env}}'
-            ]);
+            // Configure zx to not print commands and capture output
+            $.verbose = false;
+            const result = await $`docker inspect supastorj-${adapter.name}-1 --format '{{json .Config.Env}}'`;
+            const stdout = result.stdout;
             
             const envVars = JSON.parse(stdout) as string[];
             

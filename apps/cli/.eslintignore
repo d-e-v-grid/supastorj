@@ -1,0 +1,15 @@
+# Build outputs
+dist/
+build/
+
+# Coverage
+coverage/
+
+# Node modules
+node_modules/
+
+# Binary files
+bin/
+
+# Test snapshots
+**/__snapshots__/

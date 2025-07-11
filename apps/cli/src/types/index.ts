@@ -111,34 +111,68 @@ export const EnvironmentConfigSchema = z.object({
 export type EnvironmentConfig = z.infer<typeof EnvironmentConfigSchema>;
 
 /**
- * CLI configuration - simplified for project-specific needs
+ * Supastorj configuration - stored in .supastorj/config.json
  */
-export const CliConfigSchema = z.object({
-  version: z.string(),
+export const SupastorjConfigSchema = z.object({
+  version: z.string().default('1.0.0'),
   projectName: z.string(),
   environment: z.nativeEnum(Environment).default(Environment.Development),
   storageBackend: z.nativeEnum(StorageBackendType).default(StorageBackendType.File),
+  deploymentMode: z.nativeEnum(DeploymentMode).default(DeploymentMode.Docker),
+  initialized: z.boolean().default(false),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
   services: z.object({
     postgres: z.object({
       enabled: z.boolean().default(true),
       port: z.number().default(5432),
+      host: z.string().default('localhost'),
+    }).optional(),
+    pgBouncer: z.object({
+      enabled: z.boolean().default(true),
+      port: z.number().default(6432),
+      host: z.string().default('localhost'),
     }).optional(),
     storage: z.object({
       enabled: z.boolean().default(true),
       port: z.number().default(5000),
+      host: z.string().default('localhost'),
+    }).optional(),
+    postgresMeta: z.object({
+      enabled: z.boolean().default(true),
+      port: z.number().default(8080),
+      host: z.string().default('localhost'),
+    }).optional(),
+    minio: z.object({
+      enabled: z.boolean().default(false),
+      port: z.number().default(9000),
+      consolePort: z.number().default(9001),
+      host: z.string().default('localhost'),
     }).optional(),
     imgproxy: z.object({
       enabled: z.boolean().default(false),
       port: z.number().default(8080),
+      host: z.string().default('localhost'),
     }).optional(),
-  }).optional(),
+    redis: z.object({
+      enabled: z.boolean().default(false),
+      port: z.number().default(6379),
+      host: z.string().default('localhost'),
+    }).optional(),
+  }).default({}),
   settings: z.object({
     logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
     auditLog: z.boolean().default(false),
-  }).optional(),
+    dockerComposeFile: z.string().default('docker-compose.yml'),
+    envFile: z.string().default('.env'),
+  }).default({}),
 });
 
-export type CliConfig = z.infer<typeof CliConfigSchema>;
+export type SupastorjConfig = z.infer<typeof SupastorjConfigSchema>;
+
+// Legacy alias for backward compatibility
+export const CliConfigSchema = SupastorjConfigSchema;
+export type CliConfig = SupastorjConfig;
 
 /**
  * Command context

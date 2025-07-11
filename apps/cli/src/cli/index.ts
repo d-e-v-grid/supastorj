@@ -9,14 +9,14 @@ import { join, dirname } from 'path';
 import { readFile } from 'fs/promises';
 
 import { LoggerImpl } from '../core/logger.js';
-// Import commands
-import { initCommand } from '../commands/init/index.js';
-import { startCommand } from '../commands/start.js';
 import { stopCommand } from '../commands/stop.js';
-import { statusCommand } from '../commands/status.js';
 import { logsCommand } from '../commands/logs.js';
+import { startCommand } from '../commands/start.js';
 import { debugCommand } from '../commands/debug.js';
 import { EventBusImpl } from '../core/event-bus.js';
+import { statusCommand } from '../commands/status.js';
+// Import commands
+import { initCommand } from '../commands/init/index.js';
 import { PluginManager } from '../core/plugin-manager.js';
 import { ConfigManager } from '../config/config-manager.js';
 import { Environment, CommandContext } from '../types/index.js';
@@ -49,7 +49,7 @@ class SupastorCLI {
       .description('Supastorj CLI - DevOps platform for Supabase Storage management')
       .version(packageJson.version)
       .option('-e, --env <environment>', 'Environment to use', Environment.Development)
-      .option('-c, --config <path>', 'Path to configuration file', './supastorj.config.yaml')
+      .option('-c, --config <path>', 'Path to project directory', process.cwd())
       .option('--log-level <level>', 'Log level (debug, info, warn, error)', 'info')
       .option('--no-audit', 'Disable audit logging')
       .hook('preAction', async (thisCommand) => {
@@ -87,7 +87,7 @@ class SupastorCLI {
 
     // Create config manager
     const configManager = new ConfigManager({
-      configPath: options.config,
+      projectPath: options.config,
       environment: options.env,
     });
 
@@ -97,7 +97,7 @@ class SupastorCLI {
       config = await configManager.load();
     } catch (error) {
       // Config might not exist yet, use default
-      config = ConfigManager.generateDefault();
+      config = ConfigManager.generateDefault({});
     }
 
     // Create command context

@@ -1,9 +1,13 @@
 /**
- * Logger implementation with audit logging support
+ * Logger implementation with audit logging support using Pino
  */
 
+import pino from 'pino';
+import { multistream, Level } from 'pino';
+import pinoPretty from 'pino-pretty';
+import { existsSync, mkdirSync } from 'fs';
+import { dirname } from 'path';
 import chalk from 'chalk';
-import winston from 'winston';
 
 import { Logger } from '../types/index.js';
 
@@ -14,86 +18,137 @@ export interface LoggerOptions {
 }
 
 export class LoggerImpl implements Logger {
-  private logger: winston.Logger;
-  private auditLogger?: winston.Logger;
+  private logger: pino.Logger;
+  private auditLogger?: pino.Logger;
 
   constructor(options: LoggerOptions = {}) {
     const { level = 'info', auditLog = true, auditLogPath = './logs/audit.log' } = options;
 
-    // Console format with colors
-    const consoleFormat = winston.format.printf(({ level: logLevel, message, timestamp, ...meta }) => {
-      const coloredLevel = this.colorizeLevel(logLevel);
-      const formattedMeta = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-      return `${chalk.gray(timestamp)} ${coloredLevel} ${message}${formattedMeta}`;
+    // Create logs directory if it doesn't exist
+    if (auditLog && auditLogPath) {
+      const logDir = dirname(auditLogPath);
+      if (!existsSync(logDir)) {
+        mkdirSync(logDir, { recursive: true });
+      }
+    }
+
+    // Configure pretty printing for console
+    const prettyStream = pinoPretty({
+      colorize: true,
+      translateTime: 'HH:MM:ss',
+      ignore: 'pid,hostname',
+      customPrettifiers: {
+        level: (inputData: string | object) => {
+          const levelNum = typeof inputData === 'object' ? (inputData as any).level : parseInt(inputData);
+          let levelLabel = '';
+          
+          if (levelNum === 10) levelLabel = 'TRACE';
+          else if (levelNum === 20) levelLabel = 'DEBUG';
+          else if (levelNum === 30) levelLabel = 'INFO';
+          else if (levelNum === 40) levelLabel = 'WARN';
+          else if (levelNum === 50) levelLabel = 'ERROR';
+          else if (levelNum === 60) levelLabel = 'FATAL';
+          else levelLabel = 'UNKNOWN';
+
+          // Custom colors using chalk
+          switch (levelLabel) {
+            case 'ERROR':
+            case 'FATAL':
+              return chalk.red(`[${levelLabel}]`);
+            case 'WARN':
+              return chalk.yellow(`[${levelLabel}]`);
+            case 'INFO':
+              return chalk.blue(`[${levelLabel}]`);
+            case 'DEBUG':
+            case 'TRACE':
+              return chalk.gray(`[${levelLabel}]`);
+            default:
+              return `[${levelLabel}]`;
+          }
+        }
+      },
+      messageFormat: (log: any, messageKey: string) => {
+        const msg = log[messageKey];
+        // Handle audit logs specially
+        if (log.action) {
+          return `AUDIT: ${log.action} - ${msg}`;
+        }
+        return msg;
+      }
     });
+
+    // Configure streams
+    const streams: pino.StreamEntry[] = [
+      { stream: prettyStream }
+    ];
 
     // Main logger configuration
-    this.logger = winston.createLogger({
+    this.logger = pino({
       level,
-      format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.errors({ stack: true }),
-        winston.format.splat(),
-        winston.format.json()
-      ),
-      transports: [
-        new winston.transports.Console({
-          format: winston.format.combine(
-            winston.format.timestamp({ format: 'HH:mm:ss' }),
-            consoleFormat
-          ),
-        }),
-      ],
-    });
+      base: null, // Remove pid and hostname from logs
+      formatters: {
+        level: (label: string, number: number) => {
+          return { level: number };
+        }
+      }
+    }, multistream(streams));
 
     // Audit logger configuration
-    if (auditLog) {
-      this.auditLogger = winston.createLogger({
+    if (auditLog && auditLogPath) {
+      this.auditLogger = pino({
         level: 'info',
-        format: winston.format.combine(
-          winston.format.timestamp(),
-          winston.format.json()
-        ),
-        transports: [
-          new winston.transports.File({
-            filename: auditLogPath,
-            maxsize: 5242880, // 5MB
-            maxFiles: 5,
-          }),
-        ],
+        transport: {
+          target: 'pino/file',
+          options: { 
+            destination: auditLogPath,
+            mkdir: true
+          }
+        }
       });
     }
   }
 
-  private colorizeLevel(level: string): string {
-    switch (level) {
-      case 'error':
-        return chalk.red(`[${level.toUpperCase()}]`);
-      case 'warn':
-        return chalk.yellow(`[${level.toUpperCase()}]`);
-      case 'info':
-        return chalk.blue(`[${level.toUpperCase()}]`);
-      case 'debug':
-        return chalk.gray(`[${level.toUpperCase()}]`);
-      default:
-        return `[${level.toUpperCase()}]`;
+  debug(message: string, meta?: any): void {
+    if (meta !== undefined) {
+      this.logger.debug(meta, message);
+    } else {
+      this.logger.debug(message);
     }
   }
 
-  debug(message: string, meta?: any): void {
-    this.logger.debug(message, meta);
-  }
-
   info(message: string, meta?: any): void {
-    this.logger.info(message, meta);
+    if (meta !== undefined) {
+      this.logger.info(meta, message);
+    } else {
+      this.logger.info(message);
+    }
   }
 
   warn(message: string, meta?: any): void {
-    this.logger.warn(message, meta);
+    if (meta !== undefined) {
+      this.logger.warn(meta, message);
+    } else {
+      this.logger.warn(message);
+    }
   }
 
   error(message: string, meta?: any): void {
-    this.logger.error(message, meta);
+    if (meta !== undefined) {
+      // Handle different types of meta
+      if (typeof meta === 'string') {
+        this.logger.error(`${message} ${meta}`);
+      } else if (meta instanceof Error) {
+        this.logger.error({ 
+          err: meta,
+          stack: meta.stack,
+          message: meta.message 
+        }, message);
+      } else {
+        this.logger.error(meta, message);
+      }
+    } else {
+      this.logger.error(message);
+    }
   }
 
   audit(action: string, meta?: any): void {
@@ -106,25 +161,49 @@ export class LoggerImpl implements Logger {
     };
 
     if (this.auditLogger) {
-      this.auditLogger.info('AUDIT', auditEntry);
+      this.auditLogger.info(auditEntry, `AUDIT: ${action}`);
     }
 
     // Also log to main logger at debug level
-    this.logger.debug(`AUDIT: ${action}`, auditEntry);
+    this.logger.debug(auditEntry, `AUDIT: ${action}`);
   }
 
   /**
    * Create a child logger with additional context
    */
   child(childMeta: any): Logger {
-    const childWinston = this.logger.child(childMeta);
+    const childPino = this.logger.child(childMeta);
     
     return {
-      debug: (message: string, meta?: any) => childWinston.debug(message, meta),
-      info: (message: string, meta?: any) => childWinston.info(message, meta),
-      warn: (message: string, meta?: any) => childWinston.warn(message, meta),
-      error: (message: string, meta?: any) => childWinston.error(message, meta),
-      audit: (action: string, meta?: any) => this.audit(action, { ...childWinston.defaultMeta, ...meta }),
+      debug: (message: string, meta?: any) => {
+        if (meta !== undefined) {
+          childPino.debug(meta, message);
+        } else {
+          childPino.debug(message);
+        }
+      },
+      info: (message: string, meta?: any) => {
+        if (meta !== undefined) {
+          childPino.info(meta, message);
+        } else {
+          childPino.info(message);
+        }
+      },
+      warn: (message: string, meta?: any) => {
+        if (meta !== undefined) {
+          childPino.warn(meta, message);
+        } else {
+          childPino.warn(message);
+        }
+      },
+      error: (message: string, meta?: any) => {
+        if (meta !== undefined) {
+          childPino.error(meta, message);
+        } else {
+          childPino.error(message);
+        }
+      },
+      audit: (action: string, meta?: any) => this.audit(action, { ...childMeta, ...meta }),
     };
   }
 

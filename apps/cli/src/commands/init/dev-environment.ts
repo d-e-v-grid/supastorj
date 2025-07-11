@@ -6,9 +6,8 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { randomBytes } from 'crypto';
-import { dump as stringifyYaml } from 'js-yaml';
+import { intro, outro, select, confirm, spinner } from '@clack/prompts';
 import { mkdir, access, copyFile, writeFile, constants } from 'fs/promises';
-import { text, intro, outro, select, confirm, spinner } from '@clack/prompts';
 
 import { ConfigManager } from '../../config/config-manager.js';
 import { Environment, CommandContext, StorageBackendType } from '../../types/index.js';
@@ -70,16 +69,16 @@ export async function deployDevEnvironment(
   intro(chalk.cyan('🚀 Deploying Supastorj Development Environment'));
   
   // Check if configuration already exists
-  const configPath = './supastorj.config.yaml';
+  const configManager = new ConfigManager();
   const envPath = './.env';
   
   if (!force) {
-    const configExists = await directoryExists(configPath);
+    const isInitialized = await configManager.isInitialized();
     const envExists = await directoryExists(envPath);
     
-    if (configExists || envExists) {
+    if (isInitialized || envExists) {
       const shouldContinue = yes || await confirm({
-        message: 'Configuration files already exist. Overwrite?',
+        message: 'Project already initialized. Overwrite?',
         initialValue: false,
       });
       
@@ -91,8 +90,10 @@ export async function deployDevEnvironment(
   }
   
   // Get project configuration
-  let projectName = options.projectName || 'supastorj';
+  const projectName = options.projectName || 'supastorj';
   let storageBackend = options.storageBackend || StorageBackendType.File;
+  let enableImageTransform = !noImageTransform;
+  let enableRedis = false;
   
   // In dev environment, always use Development environment
   const environment = Environment.Development;
@@ -106,39 +107,40 @@ export async function deployDevEnvironment(
       ],
     }) as StorageBackendType;
     
-    // Ask about image transformation
-    const enableImageTransformation = await confirm({
+    // Ask about optional services
+    const imageTransformResult = await confirm({
       message: 'Enable image transformation (requires imgproxy)?',
       initialValue: !noImageTransform,
     });
+    enableImageTransform = typeof imageTransformResult === 'boolean' ? imageTransformResult : !noImageTransform;
     
-    options.noImageTransform = !enableImageTransformation;
+    const redisResult = await confirm({
+      message: 'Enable Redis for caching?',
+      initialValue: false,
+    });
+    enableRedis = typeof redisResult === 'boolean' ? redisResult : false;
   }
   
   const s = spinner();
   s.start('Generating configuration files...');
   
   try {
-    // Generate default configuration based on selected storage mode
-    const config = ConfigManager.generateDefault(storageBackend);
-    config.projectName = projectName;
-    config.environment = environment;
+    // Generate configuration
+    const config = ConfigManager.generateDefault({
+      projectName,
+      environment,
+      storageBackend,
+    });
     
-    // Enable imgproxy if requested
-    if (!options.noImageTransform && config.services) {
-      config.services.imgproxy = {
-        enabled: true,
-        port: 8080,
-      };
+    // Update optional services
+    if (config.services) {
+      config.services.imgproxy!.enabled = enableImageTransform;
+      config.services.redis!.enabled = enableRedis;
+      config.services.minio!.enabled = storageBackend === StorageBackendType.S3;
     }
     
-    // Write configuration file
-    await ensureDirectory(configPath);
-    const yamlContent = stringifyYaml(config, {
-      indent: 2,
-      lineWidth: 120,
-    });
-    await writeFile(configPath, yamlContent, 'utf-8');
+    // Save configuration
+    await configManager.save(config);
     
     // Generate environment variables
     if (!skipEnv) {
@@ -205,7 +207,7 @@ export async function deployDevEnvironment(
         TUS_URL_EXPIRY_MS: '3600000',
         
         // Image transformation
-        IMAGE_TRANSFORMATION_ENABLED: (!options.noImageTransform ? 'true' : 'false'),
+        IMAGE_TRANSFORMATION_ENABLED: (enableImageTransform ? 'true' : 'false'),
         IMGPROXY_URL: 'http://imgproxy:8080',
         IMGPROXY_REQUEST_TIMEOUT: '15',
         IMGPROXY_USE_ETAG: 'true',
@@ -245,6 +247,7 @@ export async function deployDevEnvironment(
     
     // Create directory structure
     const directories = [
+      configManager.getConfigDir(),
       './logs',
       './plugins',
     ];
@@ -278,17 +281,7 @@ export async function deployDevEnvironment(
       }
     }
     
-    // Create project mode artifact
-    const modeArtifact = {
-      mode: 'development',
-      createdAt: new Date().toISOString(),
-      projectName: projectName,
-      storageBackend: storageBackend,
-      imageTransformEnabled: !options.noImageTransform,
-    };
-    
-    await ensureDirectory('.supastorj/project.json');
-    await writeFile('.supastorj/project.json', JSON.stringify(modeArtifact, null, 2), 'utf-8');
+    // Project mode is now handled by the main config file
     
     // Copy docker-compose template
     const composeFile = 'docker-compose.yml';
@@ -304,25 +297,28 @@ export async function deployDevEnvironment(
     }
     
     
+    
     s.stop('Configuration files generated!');
     
     // Log audit event
     context.logger.audit('dev_environment_deployed', {
       projectName,
       environment,
-      configPath,
+      configPath: configManager.getConfigDir(),
     });
     
     outro(chalk.green(`
 ✅ Development environment deployed successfully!
 
 Next steps:
-1. Review the configuration in ${chalk.cyan('supastorj.config.yaml')}
+1. Review the configuration in ${chalk.cyan('.supastorj/config.json')}
 2. Update environment variables in ${chalk.cyan('.env')}
-3. Run ${chalk.cyan('supastorj start')} to start the services${
-  options.noImageTransform ? '' : `
-4. To include image transformation, run ${chalk.cyan('supastorj start --profile imgproxy')}`
-}
+3. Run ${chalk.cyan('supastorj start')} to start the services
+
+Optional services:
+- Image transformation: ${enableImageTransform ? chalk.green('Enabled') : chalk.gray('Disabled')}
+- Redis caching: ${enableRedis ? chalk.green('Enabled') : chalk.gray('Disabled')}
+- MinIO (S3): ${storageBackend === StorageBackendType.S3 ? chalk.green('Enabled') : chalk.gray('Disabled')}
 
 Happy coding! 🎉
     `.trim()));

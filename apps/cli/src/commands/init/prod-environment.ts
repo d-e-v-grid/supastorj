@@ -2,16 +2,13 @@
  * Production environment deployment logic
  */
 
-import ora from 'ora';
+import { $ } from 'zx';
 import chalk from 'chalk';
-import { execa } from 'execa';
-import { mkdir, chmod, writeFile, readFile } from 'fs/promises';
-import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
+import { join, dirname } from 'path';
 import { randomBytes } from 'crypto';
-import { rm } from 'fs/promises';
+import { rm , mkdir, chmod, readFile, writeFile } from 'fs/promises';
 
 import { CommandContext, StorageBackendType } from '../../types/index.js';
 
@@ -38,8 +35,7 @@ async function downloadAndBuildStorage(
   context: CommandContext,
   targetDir: string = './storage'
 ): Promise<void> {
-  const spinner = ora('Downloading Supabase Storage source code...');
-  spinner.start();
+  context.logger.info('Downloading Supabase Storage source code...');
   
   try {
     // Clean up existing directory
@@ -48,43 +44,27 @@ async function downloadAndBuildStorage(
     }
     
     // Clone the repository
-    spinner.text = 'Cloning Supabase Storage repository...';
-    await execa('git', [
-      'clone',
-      '--depth', '1',
-      '--branch', 'master',
-      'https://github.com/supabase/storage.git',
-      targetDir
-    ]);
+    context.logger.info('Cloning Supabase Storage repository...');
+    $.verbose = false;
+    await $`git clone --depth 1 --branch master https://github.com/supabase/storage.git ${targetDir}`;
     
     // Change to storage directory
     const storageDir = join(process.cwd(), targetDir);
     
     // Install dependencies
-    spinner.text = 'Installing dependencies...';
-    await execa('npm', ['install'], {
-      cwd: storageDir,
-      stdio: 'pipe'
-    });
+    context.logger.info('Installing dependencies...');
+    $.verbose = false;
+    await $`cd ${storageDir} && npm install`;
     
     // Build the project
-    spinner.text = 'Building storage server...';
-    await execa('npm', ['run', 'build:main'], {
-      cwd: storageDir,
-      stdio: 'pipe'
-    });
+    context.logger.info('Building storage server...');
+    $.verbose = false;
+    await $`cd ${storageDir} && npm run build`;
     
-    // Build migrations if needed
-    spinner.text = 'Building database migrations...';
-    await execa('npm', ['run', 'build:migrations'], {
-      cwd: storageDir,
-      stdio: 'pipe'
-    });
-    
-    spinner.succeed('Supabase Storage built successfully');
+    context.logger.info(chalk.green('✓') + ' Supabase Storage built successfully');
     
   } catch (error: any) {
-    spinner.fail('Failed to build Supabase Storage');
+    context.logger.error('Failed to build Supabase Storage');
     throw error;
   }
 }
@@ -324,57 +304,82 @@ export interface ProdDeployOptions {
 /**
  * Create startup and shutdown scripts for production deployment
  */
-async function createProductionScripts(
-  envVars: Record<string, string>,
-  options: { useDocker?: boolean } = {}
-): Promise<void> {
+async function createProductionScripts(envVars: Record<string, string>): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  const templatesDir = join(__dirname, '../../../templates');
-  
-  // Update env vars to indicate Docker usage
-  if (options.useDocker) {
-    envVars['USE_DOCKER'] = 'true';
-  } else {
-    envVars['USE_DOCKER'] = 'false';
-  }
-  
-  // Copy script templates
-  const scriptFiles = ['start-storage.sh', 'stop-storage.sh'];
-  for (const file of scriptFiles) {
-    const sourcePath = join(templatesDir, file);
-    const destPath = join('./', file);
-    
-    const content = await readFile(sourcePath, 'utf-8');
-    await writeFile(destPath, content, { mode: 0o755 });
-  }
   
   // Create systemd service from template
+  const templatesDir = join(__dirname, '../../../templates');
   const serviceTemplate = await readFile(join(templatesDir, 'supastorj.service'), 'utf-8');
   const workDir = process.cwd();
   
-  // Simple template replacement
+  // Simple template replacement for source-based deployment only
   let serviceContent = serviceTemplate
-    .replace(/{{systemUser}}/g, process.env['USER'] || 'root')
-    .replace(/{{systemGroup}}/g, process.env['USER'] || 'root')
+    .replace(/{{systemUser}}/g, process.env['USER'] || 'supastorj')
+    .replace(/{{systemGroup}}/g, process.env['USER'] || 'supastorj')
     .replace(/{{workingDirectory}}/g, workDir);
   
-  // Handle conditional sections
-  if (options.useDocker) {
-    serviceContent = serviceContent
-      .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, (match) => 
-        match.replace(/{{#useDocker}}\n?/, '').replace(/\n?{{\/useDocker}}/, '')
-      )
-      .replace(/{{#useSource}}[\s\S]*?{{\/useSource}}/g, '');
-  } else {
-    serviceContent = serviceContent
-      .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, '')
-      .replace(/{{#useSource}}[\s\S]*?{{\/useSource}}/g, (match) => 
-        match.replace(/{{#useSource}}\n?/, '').replace(/\n?{{\/useSource}}/, '')
-      );
-  }
+  // Remove Docker sections and keep only source sections
+  serviceContent = serviceContent
+    .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, '')
+    .replace(/{{#useSource}}\n?/, '')
+    .replace(/\n?{{\/useSource}}/, '');
   
   await writeFile('./supastorj.service', serviceContent);
+  
+  // Create convenience start/stop scripts
+  const startScript = `#!/bin/bash
+set -e
+
+echo "Starting Supastorj Storage API..."
+
+# Load environment variables
+set -a
+source ${workDir}/.env
+set +a
+
+# Check which server file exists
+if [ -f "${workDir}/storage/dist/start/server.js" ]; then
+  # Production build location
+  cd ${workDir}/storage
+  exec node dist/start/server.js
+elif [ -f "${workDir}/storage/dist/main/index.js" ]; then
+  # Alternative build location
+  cd ${workDir}/storage
+  exec node dist/main/index.js
+else
+  echo "Error: Storage server not found!"
+  echo "Expected locations:"
+  echo "  - ${workDir}/storage/dist/start/server.js"
+  echo "  - ${workDir}/storage/dist/main/index.js"
+  exit 1
+fi
+`;
+
+  const stopScript = `#!/bin/bash
+set -e
+
+echo "Stopping Supastorj Storage API..."
+
+# Find and kill the process (try both possible paths)
+pkill -f "node.*storage/dist/start/server.js" || true
+pkill -f "node.*storage/dist/main/index.js" || true
+
+# Give process time to shut down gracefully
+sleep 2
+
+# Force kill if still running
+pkill -9 -f "node.*storage/dist/start/server.js" 2>/dev/null || true
+pkill -9 -f "node.*storage/dist/main/index.js" 2>/dev/null || true
+
+echo "Supastorj Storage API stopped."
+`;
+
+  await writeFile('./start-storage.sh', startScript);
+  await chmod('./start-storage.sh', 0o755);
+  
+  await writeFile('./stop-storage.sh', stopScript);
+  await chmod('./stop-storage.sh', 0o755);
 }
 
 export async function deployProdEnvironment(
@@ -386,16 +391,9 @@ export async function deployProdEnvironment(
     
     intro(chalk.cyan('🚀 Supastorj Production Deployment'));
     
-    // Ask if user wants to build from source
-    const buildFromSource = await confirm({
-      message: 'Build Supabase Storage from source? (recommended for production)',
-      initialValue: true,
-    });
-    
-    if (buildFromSource) {
-      // Download and build storage
-      await downloadAndBuildStorage(context);
-    }
+    // Always build from source for production
+    context.logger.info('Building Supabase Storage from source for production deployment...');
+    await downloadAndBuildStorage(context);
     
     // Generate production configuration
     const envVars = await generateProductionConfig(context, options);
@@ -459,10 +457,8 @@ export async function deployProdEnvironment(
     context.logger.info(chalk.green('✅ Created .env'));
     
     // Create startup/shutdown scripts
-    await createProductionScripts(envVars, { useDocker: !buildFromSource });
+    await createProductionScripts(envVars);
     
-    context.logger.info(chalk.green('✅ Created start-storage.sh'));
-    context.logger.info(chalk.green('✅ Created stop-storage.sh'));
     context.logger.info(chalk.green('✅ Created supastorj.service'));
     
     // Create deployment README from template
@@ -487,7 +483,7 @@ export async function deployProdEnvironment(
       createdAt: new Date().toISOString(),
       projectName: options.projectName || 'supastorj',
       storageBackend: envVars['STORAGE_BACKEND'] || 's3',
-      buildFromSource: buildFromSource,
+      buildFromSource: true,
       databaseUrl: envVars['DATABASE_URL'] ? 'configured' : 'not-configured',
     };
     
@@ -499,8 +495,8 @@ export async function deployProdEnvironment(
 
 Next steps:
 1. Review configuration in ${chalk.cyan('.env')}
-2. Start the Storage API: ${chalk.cyan('./start-storage.sh')}
-3. Check logs: ${chalk.cyan('tail -f logs/storage-api.log')}
+2. Install systemd service (if applicable)
+3. Check logs after starting the service
 
 For systemd deployment, see README-DEPLOYMENT.md
 `));

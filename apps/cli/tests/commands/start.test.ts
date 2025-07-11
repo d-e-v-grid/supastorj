@@ -1,11 +1,11 @@
 /**
- * Up command tests
+ * Start command tests
  */
 
 import * as fs from 'fs';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
-import { upCommand } from '../../src/commands/up.js';
+import { startCommand } from '../../src/commands/start.js';
 import { LoggerImpl } from '../../src/core/logger.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
@@ -85,17 +85,17 @@ describe('Up Command', () => {
   });
 
   it('should have correct command definition', () => {
-    expect(upCommand.name).toBe('up');
-    expect(upCommand.description).toContain('Start all services');
-    expect(upCommand.options).toBeDefined();
-    expect(upCommand.options).toHaveLength(4);
+    expect(startCommand.name).toBe('up');
+    expect(startCommand.description).toContain('Start all services');
+    expect(startCommand.options).toBeDefined();
+    expect(startCommand.options).toHaveLength(4);
   });
 
   it('should check for docker-compose.yml', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     
     try {
-      await upCommand.action(context, { detach: true });
+      await startCommand.action(context, { detach: true });
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }
@@ -110,7 +110,7 @@ describe('Up Command', () => {
     const options = { detach: true };
     const { execa } = await import('execa');
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -128,7 +128,7 @@ describe('Up Command', () => {
     const options = { detach: false };
     const { execa } = await import('execa');
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -145,7 +145,7 @@ describe('Up Command', () => {
     const options = { detach: true, build: true };
     const { execa } = await import('execa');
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -158,7 +158,7 @@ describe('Up Command', () => {
     const options = { detach: true, scale: 'storage=3,postgres=2' };
     const { execa } = await import('execa');
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -174,7 +174,7 @@ describe('Up Command', () => {
     const options = { detach: true, profile: 'redis' };
     const { execa } = await import('execa');
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(execa).toHaveBeenCalledWith(
       'docker-compose',
@@ -194,7 +194,7 @@ describe('Up Command', () => {
     };
     vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([mockAdapter]);
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(mockAdapter.healthcheck).toHaveBeenCalledTimes(2);
     expect(consoleLogSpy).toHaveBeenCalledWith(
@@ -209,7 +209,7 @@ describe('Up Command', () => {
   it('should display service status after successful start', async () => {
     const options = { detach: true };
     
-    await upCommand.action(context, options);
+    await startCommand.action(context, options);
 
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringContaining('postgres')
@@ -228,7 +228,7 @@ describe('Up Command', () => {
     vi.mocked(execa).mockRejectedValue(new Error('Docker not found'));
     
     try {
-      await upCommand.action(context, options);
+      await startCommand.action(context, options);
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }
@@ -247,7 +247,7 @@ describe('Up Command', () => {
     );
     
     try {
-      await upCommand.action(context, options);
+      await startCommand.action(context, options);
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }

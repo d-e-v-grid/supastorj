@@ -2,7 +2,7 @@
  * Docker Compose utilities
  */
 
-import { execa } from 'execa';
+import { $ } from 'zx';
 
 export interface DockerComposeCommand {
   command: string;
@@ -16,7 +16,8 @@ export interface DockerComposeCommand {
 export async function getDockerComposeCommand(args: string[]): Promise<DockerComposeCommand> {
   // Try docker compose (v2) first
   try {
-    await execa('docker', ['compose', '--version']);
+    $.verbose = false;
+    await $`docker compose --version`;
     return {
       command: 'docker',
       args: ['compose', ...args],
@@ -24,7 +25,8 @@ export async function getDockerComposeCommand(args: string[]): Promise<DockerCom
   } catch {
     // Fall back to docker-compose (v1)
     try {
-      await execa('docker-compose', ['--version']);
+      $.verbose = false;
+      await $`docker-compose --version`;
       return {
         command: 'docker-compose',
         args,
@@ -40,5 +42,34 @@ export async function getDockerComposeCommand(args: string[]): Promise<DockerCom
  */
 export async function execDockerCompose(args: string[], options?: any) {
   const { command, args: finalArgs } = await getDockerComposeCommand(args);
-  return execa(command, finalArgs, options);
+  
+  // Set zx options based on provided options
+  const prevVerbose = $.verbose;
+  const prevCwd = $.cwd;
+  
+  try {
+    if (options?.cwd) {
+      $.cwd = options.cwd;
+    }
+    
+    // Default to not verbose unless explicitly set
+    $.verbose = options?.stdio === 'inherit';
+    
+    // Execute command with proper argument handling
+    const result = await $`${command} ${finalArgs}`;
+    
+    // Return result in a format similar to execa
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode || 0,
+      all: result.stdout + (result.stderr || ''),
+    };
+  } finally {
+    // Restore previous settings
+    $.verbose = prevVerbose;
+    if (prevCwd !== undefined) {
+      $.cwd = prevCwd;
+    }
+  }
 }

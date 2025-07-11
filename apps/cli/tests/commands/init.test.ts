@@ -7,7 +7,7 @@ import * as prompts from '@clack/prompts';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
-import { initCommand } from '../../src/commands/init.js';
+import { initCommand } from '../../src/commands/init/index.js';
 import { CommandContext } from '../../src/types/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';

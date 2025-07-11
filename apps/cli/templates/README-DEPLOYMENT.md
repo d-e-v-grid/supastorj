@@ -3,6 +3,11 @@
 ## Configuration
 Configuration is stored in `.env`
 
+## Storage Server Location
+The storage server should be placed at one of the following locations:
+- `./storage/dist/start/server.js` (production build)
+- `./storage/dist/main/index.js` (alternative build)
+
 ## Quick Start
 
 ### Using Docker

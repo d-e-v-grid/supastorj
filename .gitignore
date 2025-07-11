@@ -71,6 +71,7 @@ docker-compose.override.yml
 supastorj.config.yaml
 docker-compose.yml
 config/
+.supastorj/
 
 # Monorepo
 .changeset/

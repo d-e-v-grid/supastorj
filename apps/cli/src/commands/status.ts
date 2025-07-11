@@ -2,19 +2,18 @@
  * Status command - Show service status
  */
 
-import ora, { type Ora } from 'ora';
+import { $ } from 'zx';
 import chalk from 'chalk';
 import React from 'react';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import ora, { type Ora } from 'ora';
 import { readFile } from 'fs/promises';
-import { Box, Text, render, useApp, useInput } from 'ink';
-import { execa } from 'execa';
-import dotenv from 'dotenv';
+import { Box, Text, render, useApp, useInput, useStdin } from 'ink';
 
-import { DockerAdapter } from '../adapters/docker-adapter.js';
-import { ServiceStatus, CommandContext, CommandDefinition, Environment } from '../types/index.js';
 import { ConfigManager } from '../config/config-manager.js';
+import { DockerAdapter } from '../adapters/docker-adapter.js';
+import { Environment, ServiceStatus, CommandContext, CommandDefinition } from '../types/index.js';
 
 interface ServiceInfo {
   name: string;
@@ -162,16 +161,25 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
     console.log(JSON.stringify(services, null, 2));
   } else if (options.watch) {
     // Interactive watch mode using Ink
-    const { useState, useEffect } = React;
+    // React is already imported at the top of the file
     
     const StatusTable: React.FC<{ adapters: DockerAdapter[], onExit?: () => void }> = ({ adapters: adapterList, onExit }) => {
       const { exit } = useApp();
-      const [services, setServices] = useState<ServiceInfo[]>([]);
-      const [lastUpdate, setLastUpdate] = useState(new Date());
+      const { setRawMode } = useStdin();
+      const [serviceList, setServiceList] = React.useState<ServiceInfo[]>([]);
+      const [lastUpdate, setLastUpdate] = React.useState(new Date());
+      
+      // Enable raw mode for keyboard input
+      React.useEffect(() => {
+        setRawMode(true);
+        return () => {
+          setRawMode(false);
+        };
+      });
       
       // Handle keyboard input
       useInput((input, key) => {
-        if ((key.ctrl && input === 'c') || input === 'q') {
+        if ((key.ctrl && input === 'c') || input === 'q' || input === 'Q') {
           if (onExit) onExit();
           exit();
         }
@@ -205,12 +213,12 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           }
         }
         
-        setServices(updatedServices);
+        setServiceList(updatedServices);
         setLastUpdate(new Date());
       };
       
       // Initial fetch and interval setup
-      useEffect(() => {
+      React.useEffect(() => {
         fetchServices();
         
         const interval = setInterval(fetchServices, 2000);
@@ -230,7 +238,7 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           React.createElement(Text, { bold: true }, 'Ports'.padEnd(20)),
           React.createElement(Text, { bold: true }, 'Uptime')
         ),
-        ...services.map(s => 
+        ...serviceList.map(s => 
           React.createElement(
             Box,
             { key: s.name },
@@ -243,33 +251,39 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
         ),
         React.createElement(Box, { marginTop: 1 },
           React.createElement(Text, { dimColor: true }, 
-            `Press Ctrl+C or Q to exit • Last update: ${lastUpdate.toLocaleTimeString()}`
+            `Press CTRL+C or Q to exit • Last update: ${lastUpdate.toLocaleTimeString()}`
           )
         )
       );
     };
     
-    // Setup signal handlers before starting the app
+    // Setup clean exit handler
     const exitHandler = () => {
       // Restore terminal
       process.stdout.write('\u001B[?25h'); // Show cursor
+      process.stdout.write('\n'); // Add newline for cleaner exit
       process.exit(0);
     };
     
-    // Handle exit - clean up interval when process exits
-    process.on('SIGINT', exitHandler);
-    process.on('SIGTERM', exitHandler);
+    // Handle process exit
     process.on('exit', () => {
       // Ensure terminal is restored on exit
       process.stdout.write('\u001B[?25h'); // Show cursor
     });
     
     // Render the app with adapters
-    render(React.createElement(StatusTable, { 
+    const app = render(React.createElement(StatusTable, { 
       adapters,
       onExit: exitHandler
     }), {
-      exitOnCtrlC: false  // We handle exit manually
+      exitOnCtrlC: true  // Let Ink handle Ctrl+C properly
+    });
+    
+    // Wait for app to unmount properly
+    app.waitUntilExit().then(() => {
+      exitHandler();
+    }).catch(() => {
+      exitHandler();
     });
   } else {
     // Simple table output
@@ -353,7 +367,7 @@ async function showProductionStatus(context: CommandContext, options: any, spinn
           name: 'storage-api',
           status: 'running',
           pid: pidNum,
-          port: port
+          port
         }], null, 2));
       } else {
         console.log('\n' + chalk.bold('Service Status:'));
@@ -385,7 +399,8 @@ async function showProductionStatus(context: CommandContext, options: any, spinn
       console.log('\n' + chalk.gray('Service is not running. Start with: supastorj start'));
       
       // Clean up stale PID file
-      await execa('rm', ['-f', pidPath]);
+      $.verbose = false;
+      await $`rm -f ${pidPath}`;
     }
   } catch (error: any) {
     spinner.fail('Failed to check production status');

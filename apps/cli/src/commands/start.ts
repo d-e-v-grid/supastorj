@@ -1,221 +1,392 @@
-/**
- * Start command - Start services based on environment configuration
- */
-
-import { CommandDefinition, CommandContext, Environment } from '../types/index.js';
-import { existsSync } from 'fs';
 import { join } from 'path';
-import ora from 'ora';
-import chalk from 'chalk';
-import { execa } from 'execa';
-import { readFile } from 'fs/promises';
-import dotenv from 'dotenv';
+import { $, fs, chalk } from 'zx';
+import { createServer } from 'net';
+
+import { CommandContext, CommandDefinition, StorageBackendType } from '../types/index.js';
 import { ConfigManager } from '../config/config-manager.js';
+
+// Set zx options
+$.verbose = false;
+
+// Check if port is available
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close();
+      resolve(true);
+    });
+    server.listen(port);
+  });
+}
+
+// Get required ports from docker-compose
+async function getRequiredPorts(composeFile: string): Promise<number[]> {
+  const content = await fs.readFile(composeFile, 'utf-8');
+  const portRegex = /(?:^|\s)(?:-\s*)?["']?(\d+):(\d+)["']?/gm;
+  const ports: number[] = [];
+  let match;
+  
+  while ((match = portRegex.exec(content)) !== null) {
+    const hostPort = parseInt(match[1]);
+    if (!ports.includes(hostPort)) {
+      ports.push(hostPort);
+    }
+  }
+  
+  return ports;
+}
+
+// Detect deployment mode from config
+async function getDeploymentMode(configManager: ConfigManager): Promise<string> {
+  try {
+    const config = await configManager.load();
+    // Map environment to deployment mode
+    switch (config.environment) {
+      case 'production':
+        return 'production';
+      case 'staging':
+        return 'staging';
+      default:
+        return 'development';
+    }
+  } catch (error) {
+    // Fallback
+    return 'development';
+  }
+}
+
+// Load environment variables
+async function loadEnvVars(): Promise<Record<string, string>> {
+  const envVars: Record<string, string> = {};
+  
+  if (await fs.pathExists('.env')) {
+    const envContent = await fs.readFile('.env', 'utf-8');
+    envContent.split('\n').forEach(line => {
+      const match = line.match(/^([^=]+)=(.*)$/);
+      if (match) {
+        envVars[match[1]] = match[2];
+      }
+    });
+  }
+  
+  return envVars;
+}
 
 export const startCommand: CommandDefinition = {
   name: 'start',
-  description: 'Start services based on environment configuration',
+  description: 'Start Supastorj services',
   options: [
+    {
+      flags: '--dev',
+      description: 'Force development mode',
+      defaultValue: false,
+    },
+    {
+      flags: '--prod',
+      description: 'Force production mode',
+      defaultValue: false,
+    },
+    {
+      flags: '-d, --detach',
+      description: 'Run in detached mode',
+      defaultValue: true,
+    },
     {
       flags: '-a, --attach',
       description: 'Run in attached mode (foreground)',
       defaultValue: false,
     },
     {
-      flags: '--storage-dir <dir>',
-      description: 'Path to storage source directory (production only)',
-      defaultValue: './storage',
+      flags: '--scale <service=count>',
+      description: 'Scale services (e.g., --scale storage=3)',
     },
     {
-      flags: '--env <file>',
-      description: 'Environment file to use',
-      defaultValue: '.env',
+      flags: '--profile <profile>',
+      description: 'Docker compose profile to use',
     },
     {
-      flags: '-e, --environment <env>',
-      description: 'Override environment from config',
+      flags: '--build',
+      description: 'Build images before starting containers',
+      defaultValue: false,
     },
   ],
   action: async (context: CommandContext, options: any) => {
-    const spinner = ora();
-    
     try {
-      // Load configuration
+      // Check if project is initialized
       const configManager = new ConfigManager();
-      await configManager.load();
-      const config = configManager.getConfig();
       
-      // Determine environment to use
-      const environment = options.environment || config.environment || Environment.Development;
+      const isInitialized = await configManager.isInitialized();
+      if (!isInitialized) {
+        context.logger.error('Project not initialized. Run "supastorj init" first.');
+        process.exit(1);
+      }
       
-      context.logger.info(`Starting services for ${chalk.cyan(environment)} environment`);
-      
-      // Handle based on environment
-      if (environment === Environment.Development || environment === Environment.Staging) {
-        // Use Docker Compose for development/staging
-        await startDockerCompose(context, options, configManager);
-      } else if (environment === Environment.Production) {
-        // Use bare metal deployment for production
-        await startProduction(context, options, configManager);
+      // Load configuration
+      const config = await configManager.load();
+
+      // Load .env file if exists
+      if (!await fs.pathExists('.env')) {
+        context.logger.error('.env file not found! Run "supastorj init" first.');
+        process.exit(1);
+      }
+
+      // Load environment variables
+      const envVars = await loadEnvVars();
+
+      // Detect deployment mode
+      let deploymentMode = await getDeploymentMode(configManager);
+      if (options.dev) deploymentMode = 'development';
+      if (options.prod) deploymentMode = 'production';
+
+      // Handle attach/detach modes
+      const attachMode = options.attach || !options.detach;
+
+      context.logger.info(`Starting Supastorj in ${chalk.cyan(deploymentMode)} mode...`);
+
+      // Development mode - Use Docker Compose
+      if (deploymentMode === 'development' || deploymentMode === 'staging') {
+        // Check if docker-compose.yml exists
+        if (!await fs.pathExists('docker-compose.yml')) {
+          context.logger.error('docker-compose.yml not found!');
+          process.exit(1);
+        }
+
+        // Check which docker compose command to use
+        let useDockerCompose = false;
+        try {
+          await $`docker compose version`;
+        } catch {
+          try {
+            await $`docker-compose version`;
+            useDockerCompose = true;
+          } catch {
+            context.logger.error('Docker Compose is not installed!');
+            context.logger.info('Please install Docker Compose: https://docs.docker.com/compose/install/');
+            process.exit(1);
+          }
+        }
+
+        const projectName = config.projectName || 'supastorj';
+
+        // Check port availability
+        context.logger.info('Checking port availability...');
+        const requiredPorts = await getRequiredPorts('docker-compose.yml');
+        const occupiedPorts: number[] = [];
+        
+        for (const port of requiredPorts) {
+          if (!(await isPortAvailable(port))) {
+            occupiedPorts.push(port);
+          }
+        }
+        
+        if (occupiedPorts.length > 0) {
+          context.logger.error('Port conflict detected');
+          context.logger.error(`The following ports are already in use: ${occupiedPorts.join(', ')}`);
+          context.logger.info('Please stop the services using these ports or change the port configuration in .env file');
+          process.exit(1);
+        }
+        context.logger.info(chalk.green('✓') + ' All required ports are available');
+
+        // Build docker-compose command
+        const profiles: string[] = [];
+        if (options.profile) {
+          profiles.push(options.profile);
+        } else {
+          // Auto-detect profiles based on configuration
+          if (config.storageBackend === StorageBackendType.S3) {
+            profiles.push('s3');
+            context.logger.info('Using S3 storage backend with MinIO');
+          }
+          
+          if (configManager.isServiceEnabled('imgproxy')) {
+            profiles.push('imgproxy');
+            context.logger.info('Image transformation enabled, including imgproxy service');
+          }
+          
+          if (configManager.isServiceEnabled('redis')) {
+            profiles.push('redis');
+            context.logger.info('Redis caching enabled');
+          }
+        }
+
+        // Start services
+        context.logger.info('Starting services...');
+        
+        const composeCmd = useDockerCompose ? 'docker-compose' : 'docker';
+        const composeArgs = useDockerCompose ? [] : ['compose'];
+        
+        // Add compose file and project name
+        composeArgs.push('-f', 'docker-compose.yml', '-p', projectName);
+        
+        // Add profiles
+        for (const profile of profiles) {
+          composeArgs.push('--profile', profile);
+        }
+        
+        // Add up command
+        composeArgs.push('up');
+        
+        if (!attachMode) {
+          composeArgs.push('-d');
+        }
+        
+        if (options.build) {
+          composeArgs.push('--build');
+        }
+        
+        if (options.scale) {
+          const scales = options.scale.split(',');
+          for (const scale of scales) {
+            composeArgs.push('--scale', scale);
+          }
+        }
+
+        if (attachMode) {
+          context.logger.info('Starting services in attached mode (press Ctrl+C to stop)...');
+          
+          // Run in attached mode with inherited stdio
+          await $`${composeCmd} ${composeArgs}`.pipe(process.stdout);
+        } else {
+          try {
+            await $`${composeCmd} ${composeArgs}`;
+            context.logger.info(chalk.green('✓') + ' Services started successfully');
+            
+            // Wait for services to be healthy
+            context.logger.info('Waiting for services to be healthy...');
+            await $`sleep 5`;
+            context.logger.info(chalk.green('✓') + ' All services started successfully!');
+            
+            context.logger.info(`Run ${chalk.cyan('supastorj status')} to check service status`);
+            context.logger.info(`Run ${chalk.cyan('supastorj logs -f')} to see service logs`);
+          } catch (error) {
+            context.logger.error('Failed to start services');
+            throw error;
+          }
+        }
+        
+      // Production mode
+      } else if (deploymentMode === 'production') {
+        const useDocker = envVars['USE_DOCKER'] === 'true';
+        
+        // Create logs directory if it doesn't exist
+        await fs.ensureDir('logs');
+        
+        if (useDocker) {
+          context.logger.info('Starting Storage API with Docker...');
+          
+          // Check if Docker is installed
+          try {
+            await $`docker --version`;
+          } catch {
+            context.logger.error('Docker is not installed!');
+            process.exit(1);
+          }
+          
+          // Pull latest image if needed
+          await $`docker pull supabase/storage-api:v1.13.1`;
+          
+          // Stop existing container if running
+          try {
+            await $`docker stop storage-api`;
+            await $`docker rm storage-api`;
+          } catch {
+            // Container might not exist, that's ok
+          }
+          
+          // Run container
+          const serverPort = envVars['SERVER_PORT'] || '5000';
+          const dockerArgs = [
+            'run',
+            attachMode ? '--rm' : '-d',
+            '--name', 'storage-api',
+          ];
+          
+          if (!attachMode) {
+            dockerArgs.push('--restart', 'unless-stopped');
+          }
+          
+          dockerArgs.push(
+            '-p', `${serverPort}:5000`,
+            '--env-file', '.env',
+            '-v', `${process.cwd()}/logs:/app/logs`,
+            '-v', `${process.cwd()}/data/storage:/var/lib/storage`,
+            'supabase/storage-api:v1.13.1'
+          );
+          
+          if (attachMode) {
+            context.logger.info('Starting Storage API in attached mode (press Ctrl+C to stop)...');
+            await $`docker ${dockerArgs}`.pipe(process.stdout);
+          } else {
+            await $`docker ${dockerArgs}`;
+            context.logger.info(chalk.green('✓') + ` Storage API started on port ${serverPort}`);
+            context.logger.info('View logs: docker logs -f storage-api');
+          }
+        } else {
+          context.logger.info('Starting Storage API from source...');
+          
+          // Check if storage directory exists
+          if (!await fs.pathExists('./storage')) {
+            context.logger.error('./storage directory not found!');
+            context.logger.error('Run "supastorj init prod" with source build option first.');
+            process.exit(1);
+          }
+          
+          // Check if built
+          if (!await fs.pathExists('./storage/dist/start/server.js')) {
+            context.logger.error('Storage server not built!');
+            context.logger.error('Run "npm run build" in the storage directory.');
+            process.exit(1);
+          }
+          
+          // Run migrations
+          context.logger.info('Running database migrations...');
+          try {
+            await $`cd storage && npm run db:migrate`;
+          } catch {
+            context.logger.warn('Migration may have already been applied');
+          }
+          
+          // Start the server
+          if (attachMode) {
+            context.logger.info('Starting server in attached mode (press Ctrl+C to stop)...');
+            context.logger.info(`Server: http://${envVars['SERVER_HOST'] || '0.0.0.0'}:${envVars['SERVER_PORT'] || '5000'}`);
+            await $`cd storage && node dist/start/server.js`.pipe(process.stdout);
+          } else {
+            // Start in background using nohup
+            const logFile = join(process.cwd(), 'logs/storage-api.log');
+            const pidFile = join(process.cwd(), 'storage-api.pid');
+            
+            // Use bash to run the command in background
+            const result = await $`bash -c "cd storage && nohup node dist/start/server.js > ${logFile} 2>&1 & echo $!"`;
+            const pid = result.stdout.trim();
+            
+            await fs.writeFile(pidFile, pid, 'utf-8');
+            
+            context.logger.info(chalk.green('✓') + ' Storage API started!');
+            context.logger.info(`Server: http://${envVars['SERVER_HOST'] || '0.0.0.0'}:${envVars['SERVER_PORT'] || '5000'}`);
+            context.logger.info(`PID: ${pid}`);
+            context.logger.info('View logs: tail -f logs/storage-api.log');
+          }
+        }
       } else {
-        throw new Error(`Unknown environment: ${environment}`);
+        context.logger.error(`Unknown deployment mode: ${deploymentMode}`);
+        process.exit(1);
       }
       
     } catch (error: any) {
-      spinner.fail('Failed to start services');
-      context.logger.error('Error:', error.message);
+      context.logger.error('Failed to start services');
+      
+      if (error.stderr) {
+        context.logger.error(error.stderr.toString());
+      } else if (error.message) {
+        context.logger.error(error.message);
+      } else {
+        context.logger.error(String(error));
+      }
+      
       process.exit(1);
     }
   },
 };
-
-async function startDockerCompose(context: CommandContext, options: any, configManager: ConfigManager) {
-  const spinner = ora();
-  
-  // Check if docker-compose.yml exists
-  const composeFile = join(process.cwd(), 'docker-compose.yml');
-  if (!existsSync(composeFile)) {
-    context.logger.error('No docker-compose.yml found. Run "supastorj init" first.');
-    process.exit(1);
-  }
-  
-  spinner.start('Starting services with Docker Compose...');
-  
-  try {
-    // Get project name from configuration
-    const config = configManager.getConfig();
-    const projectName = config.projectName || 'supastorj';
-    
-    // Prepare docker-compose command
-    const args = ['-f', composeFile, '-p', projectName, 'up'];
-    // Run in detached mode by default unless --attach is specified
-    if (!options.attach) {
-      args.push('-d');
-    }
-    
-    // Check which docker compose command to use
-    let dockerComposeCmd = 'docker-compose';
-    try {
-      await execa('docker', ['compose', '--version']);
-      dockerComposeCmd = 'docker';
-      args.unshift('compose');
-    } catch {
-      try {
-        await execa('docker-compose', ['--version']);
-      } catch (error) {
-        spinner.fail('Docker Compose is not installed');
-        context.logger.error('Please install Docker Compose: https://docs.docker.com/compose/install/');
-        process.exit(1);
-      }
-    }
-    
-    spinner.stop();
-    
-    // Execute docker-compose up
-    const subprocess = execa(dockerComposeCmd, args, {
-      stdio: options.attach ? 'inherit' : 'pipe',
-    });
-    
-    if (!options.attach) {
-      await subprocess;
-      spinner.succeed('Services started successfully');
-      context.logger.info('Run "supastorj status" to check service status');
-      context.logger.info('Run "supastorj logs -f" to see service logs');
-    } else {
-      await subprocess;
-    }
-    
-  } catch (error: any) {
-    spinner.fail('Failed to start services');
-    throw error;
-  }
-}
-
-async function startProduction(context: CommandContext, options: any, configManager: ConfigManager) {
-  const spinner = ora();
-  
-  try {
-    // Check if storage directory exists
-    const storageDir = join(process.cwd(), options.storageDir);
-    if (!existsSync(storageDir)) {
-      context.logger.error(`Storage directory not found: ${storageDir}`);
-      context.logger.info('Run "supastorj init prod" first to build storage from source');
-      process.exit(1);
-    }
-    
-    // Check if built files exist
-    const serverPath = join(storageDir, 'dist/start/server.js');
-    if (!existsSync(serverPath)) {
-      context.logger.error('Storage server not built');
-      context.logger.info('Run "supastorj init prod" first to build storage from source');
-      process.exit(1);
-    }
-    
-    // Check environment file
-    const envPath = join(process.cwd(), options.env);
-    if (!existsSync(envPath)) {
-      context.logger.error(`Environment file not found: ${envPath}`);
-      context.logger.info('Create a .env file with your configuration');
-      process.exit(1);
-    }
-    
-    // Load environment variables
-    const envContent = await readFile(envPath, 'utf-8');
-    const envVars = dotenv.parse(envContent);
-    
-    const serverHost = envVars['SERVER_HOST'] || '0.0.0.0';
-    const serverPort = envVars['SERVER_PORT'] || '5000';
-    
-    if (!options.attach) {
-      // Run in background using the start script
-      const startScript = join(process.cwd(), 'start-storage.sh');
-      if (!existsSync(startScript)) {
-        context.logger.error('Start script not found');
-        context.logger.info('Run "supastorj init prod" first to generate startup scripts');
-        process.exit(1);
-      }
-      
-      spinner.start('Starting Storage API in background...');
-      
-      try {
-        await execa('bash', [startScript], {
-          stdio: 'pipe',
-          env: { ...process.env, ...envVars }
-        });
-        
-        spinner.succeed('Storage API started in background');
-        context.logger.info(`API available at: http://${serverHost}:${serverPort}`);
-        context.logger.info('Check logs: tail -f logs/storage-api.log');
-        context.logger.info('Stop with: supastorj stop');
-      } catch (error: any) {
-        spinner.fail('Failed to start Storage API');
-        throw error;
-      }
-    } else {
-      // Run in foreground
-      spinner.start('Starting Storage API...');
-      spinner.stop();
-      
-      context.logger.info(chalk.cyan('Starting Supabase Storage API'));
-      context.logger.info(`Server: http://${serverHost}:${serverPort}`);
-      context.logger.info(chalk.gray('Press Ctrl+C to stop'));
-      
-      // Start the server
-      await execa('node', [serverPath], {
-        stdio: 'inherit',
-        cwd: storageDir,
-        env: { ...process.env, ...envVars }
-      });
-    }
-    
-  } catch (error: any) {
-    spinner.fail('Failed to start Storage API');
-    context.logger.error('Error:', error.message);
-    
-    if (error.stderr) {
-      context.logger.error('Details:', error.stderr);
-    }
-    
-    process.exit(1);
-  }
-}
