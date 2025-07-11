@@ -2,13 +2,12 @@
  * Production environment deployment logic
  */
 
-import { $ } from 'zx';
-import chalk from 'chalk';
+import { $, chalk } from 'zx';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { randomBytes } from 'crypto';
-import { rm , mkdir, chmod, readFile, writeFile } from 'fs/promises';
+import { rm, mkdir, chmod, readFile, writeFile } from 'fs/promises';
 
 import { CommandContext, StorageBackendType } from '../../types/index.js';
 
@@ -36,33 +35,33 @@ async function downloadAndBuildStorage(
   targetDir: string = './storage'
 ): Promise<void> {
   context.logger.info('Downloading Supabase Storage source code...');
-  
+
   try {
     // Clean up existing directory
     if (existsSync(targetDir)) {
       await rm(targetDir, { recursive: true, force: true });
     }
-    
+
     // Clone the repository
     context.logger.info('Cloning Supabase Storage repository...');
     $.verbose = false;
     await $`git clone --depth 1 --branch master https://github.com/supabase/storage.git ${targetDir}`;
-    
+
     // Change to storage directory
     const storageDir = join(process.cwd(), targetDir);
-    
+
     // Install dependencies
     context.logger.info('Installing dependencies...');
     $.verbose = false;
     await $`cd ${storageDir} && npm install`;
-    
+
     // Build the project
     context.logger.info('Building storage server...');
     $.verbose = false;
     await $`cd ${storageDir} && npm run build`;
-    
+
     context.logger.info(chalk.green('✓') + ' Supabase Storage built successfully');
-    
+
   } catch (error: any) {
     context.logger.error('Failed to build Supabase Storage');
     throw error;
@@ -77,10 +76,10 @@ async function generateProductionConfig(
   options: ProdDeployOptions
 ): Promise<Record<string, string>> {
   const { select, text, password, confirm } = await import('@clack/prompts');
-  
+
   context.logger.info(chalk.cyan('\n🔧 Storage API Production Configuration\n'));
   context.logger.info('Configure connection to your existing infrastructure.\n');
-  
+
   // 1. Server configuration
   const serverHost = await text({
     message: 'Server Host',
@@ -91,7 +90,7 @@ async function generateProductionConfig(
       return undefined;
     },
   }) as string;
-  
+
   const serverPort = await text({
     message: 'Server Port',
     placeholder: '5000',
@@ -104,18 +103,18 @@ async function generateProductionConfig(
       return undefined;
     },
   }) as string;
-  
+
   // 2. JWT Secret
   let jwtSecret = await password({
     message: 'JWT Secret (leave empty to auto-generate)',
     mask: '*',
   }) as string | undefined;
-  
+
   if (!jwtSecret || jwtSecret.trim() === '') {
     jwtSecret = generateJWTSecret();
     context.logger.info(chalk.gray('Generated JWT secret: ' + jwtSecret.substring(0, 8) + '...'));
   }
-  
+
   // 3. Database URLs
   const databaseUrl = await text({
     message: 'Database URL (PostgreSQL connection string)',
@@ -128,7 +127,7 @@ async function generateProductionConfig(
       return undefined;
     },
   }) as string;
-  
+
   const databasePoolUrl = await text({
     message: 'Database Pool URL (PgBouncer connection string)',
     placeholder: 'postgresql://postgres:postgres@127.0.0.1:6432/postgres',
@@ -140,7 +139,7 @@ async function generateProductionConfig(
       return undefined;
     },
   }) as string;
-  
+
   // 4. Storage backend
   const storageBackend = await select({
     message: 'Storage Backend',
@@ -149,39 +148,39 @@ async function generateProductionConfig(
       { value: StorageBackendType.S3, label: 'S3-Compatible Storage' },
     ],
   }) as StorageBackendType;
-  
+
   const envVars: Record<string, string> = {
     // Server
     SERVER_HOST: serverHost,
     SERVER_PORT: serverPort,
-    
+
     // Auth
     AUTH_JWT_SECRET: jwtSecret,
     AUTH_JWT_ALGORITHM: 'HS256',
     ANON_KEY: generateSecureKey(),
     SERVICE_KEY: generateSecureKey(),
-    
+
     // Database
     DATABASE_URL: databaseUrl,
     DATABASE_POOL_URL: databasePoolUrl,
     DB_INSTALL_ROLES: 'true',
-    
+
     // Storage Backend
     STORAGE_BACKEND: storageBackend,
-    
+
     // Upload Configuration
     UPLOAD_FILE_SIZE_LIMIT: '524288000',
     UPLOAD_FILE_SIZE_LIMIT_STANDARD: '52428800',
     UPLOAD_SIGNED_URL_EXPIRATION_TIME: '120',
     TUS_URL_PATH: '/upload/resumable',
     TUS_URL_EXPIRY_MS: '3600000',
-    
+
     // Tenant
     TENANT_ID: options.projectName || 'supastorj',
     REGION: 'us-east-1',
     PROJECT_NAME: options.projectName || 'supastorj',
   };
-  
+
   // 5. Storage backend specific configuration
   if (storageBackend === StorageBackendType.S3) {
     const s3Provider = await select({
@@ -193,7 +192,7 @@ async function generateProductionConfig(
         { value: 'other', label: 'Other S3-compatible storage' },
       ],
     }) as string;
-    
+
     const s3Endpoint = await text({
       message: 'S3 Endpoint URL',
       placeholder: s3Provider === 'aws' ? 'https://s3.amazonaws.com' : 'http://localhost:9000',
@@ -208,7 +207,7 @@ async function generateProductionConfig(
         }
       },
     }) as string;
-    
+
     const s3Bucket = await text({
       message: 'S3 Bucket Name',
       placeholder: 'storage',
@@ -221,13 +220,13 @@ async function generateProductionConfig(
         return undefined;
       },
     }) as string;
-    
+
     const s3Region = await text({
       message: 'S3 Region',
       placeholder: 'us-east-1',
       defaultValue: 'us-east-1',
     }) as string;
-    
+
     const s3AccessKey = await text({
       message: 'S3 Access Key ID',
       placeholder: 'your-access-key',
@@ -236,7 +235,7 @@ async function generateProductionConfig(
         return undefined;
       },
     }) as string;
-    
+
     const s3SecretKey = await password({
       message: 'S3 Secret Access Key',
       mask: '*',
@@ -245,7 +244,7 @@ async function generateProductionConfig(
         return undefined;
       },
     }) as string;
-    
+
     Object.assign(envVars, {
       STORAGE_S3_BUCKET: s3Bucket,
       STORAGE_S3_ENDPOINT: s3Endpoint,
@@ -263,29 +262,29 @@ async function generateProductionConfig(
       placeholder: '/var/lib/storage',
       defaultValue: '/var/lib/storage',
     }) as string;
-    
+
     envVars['STORAGE_FILE_BACKEND_PATH'] = storagePath;
   }
-  
+
   // 6. Image transformation
   const enableImageTransform = await confirm({
     message: 'Enable image transformation? (requires imgproxy)',
     initialValue: false,
   });
-  
+
   envVars['IMAGE_TRANSFORMATION_ENABLED'] = enableImageTransform ? 'true' : 'false';
-  
+
   if (enableImageTransform) {
     const imgproxyUrl = await text({
       message: 'Imgproxy URL',
       placeholder: 'http://localhost:8080',
       defaultValue: 'http://localhost:8080',
     }) as string;
-    
+
     envVars['IMGPROXY_URL'] = imgproxyUrl;
     envVars['IMGPROXY_REQUEST_TIMEOUT'] = '15';
   }
-  
+
   return envVars;
 }
 
@@ -307,26 +306,26 @@ export interface ProdDeployOptions {
 async function createProductionScripts(envVars: Record<string, string>): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  
+
   // Create systemd service from template
   const templatesDir = join(__dirname, '../../../templates');
   const serviceTemplate = await readFile(join(templatesDir, 'supastorj.service'), 'utf-8');
   const workDir = process.cwd();
-  
+
   // Simple template replacement for source-based deployment only
   let serviceContent = serviceTemplate
     .replace(/{{systemUser}}/g, process.env['USER'] || 'supastorj')
     .replace(/{{systemGroup}}/g, process.env['USER'] || 'supastorj')
     .replace(/{{workingDirectory}}/g, workDir);
-  
+
   // Remove Docker sections and keep only source sections
   serviceContent = serviceContent
     .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, '')
     .replace(/{{#useSource}}\n?/, '')
     .replace(/\n?{{\/useSource}}/, '');
-  
+
   await writeFile('./supastorj.service', serviceContent);
-  
+
   // Create convenience start/stop scripts
   const startScript = `#!/bin/bash
 set -e
@@ -377,7 +376,7 @@ echo "Supastorj Storage API stopped."
 
   await writeFile('./start-storage.sh', startScript);
   await chmod('./start-storage.sh', 0o755);
-  
+
   await writeFile('./stop-storage.sh', stopScript);
   await chmod('./stop-storage.sh', 0o755);
 }
@@ -388,36 +387,36 @@ export async function deployProdEnvironment(
 ): Promise<void> {
   try {
     const { intro, outro, confirm } = await import('@clack/prompts');
-    
+
     intro(chalk.cyan('🚀 Supastorj Production Deployment'));
-    
+
     // Always build from source for production
     context.logger.info('Building Supabase Storage from source for production deployment...');
     await downloadAndBuildStorage(context);
-    
+
     // Generate production configuration
     const envVars = await generateProductionConfig(context, options);
-    
+
     // Merge with template
     const templatePath = join(dirname(fileURLToPath(import.meta.url)), '../../../templates/.env.storage');
     let templateContent = '';
-    
+
     if (existsSync(templatePath)) {
       templateContent = await readFile(templatePath, 'utf-8');
     }
-    
+
     // Parse template to preserve structure
     const templateLines = templateContent.split('\n');
     const updatedLines: string[] = [];
     const usedKeys = new Set<string>();
-    
+
     // Update existing values from template
     for (const line of templateLines) {
       if (line.trim().startsWith('#') || line.trim() === '') {
         updatedLines.push(line);
         continue;
       }
-      
+
       const match = line.match(/^([^=]+)=(.*)$/);
       if (match && match[1]) {
         const key = match[1].trim();
@@ -436,7 +435,7 @@ export async function deployProdEnvironment(
         updatedLines.push(line);
       }
     }
-    
+
     // Add any new keys that weren't in template
     const newKeys = Object.keys(envVars).filter(k => !usedKeys.has(k));
     if (newKeys.length > 0) {
@@ -448,35 +447,35 @@ export async function deployProdEnvironment(
         updatedLines.push(`${key}=${envVars[key]}`);
       }
     }
-    
+
     // Save configuration as .env (not .env.storage)
     const envPath = join(process.cwd(), '.env');
     await writeFile(envPath, updatedLines.join('\n'), 'utf-8');
     await chmod(envPath, 0o600);
-    
+
     context.logger.info(chalk.green('✅ Created .env'));
-    
+
     // Create startup/shutdown scripts
     await createProductionScripts(envVars);
-    
+
     context.logger.info(chalk.green('✅ Created supastorj.service'));
-    
+
     // Create deployment README from template
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const templatesDir = join(__dirname, '../../../templates');
     const readmeTemplate = await readFile(join(templatesDir, 'README-DEPLOYMENT.md'), 'utf-8');
-    
+
     const readmeContent = readmeTemplate
       .replace(/{{serverHost}}/g, envVars['SERVER_HOST'] || '0.0.0.0')
       .replace(/{{serverPort}}/g, envVars['SERVER_PORT'] || '5000')
       .replace(/{{jwtSecretPreview}}/g, envVars['AUTH_JWT_SECRET']?.substring(0, 8) || 'N/A')
       .replace(/{{anonKeyPreview}}/g, envVars['ANON_KEY']?.substring(0, 8) || 'N/A')
       .replace(/{{serviceKeyPreview}}/g, envVars['SERVICE_KEY']?.substring(0, 8) || 'N/A');
-    
+
     await writeFile('README-DEPLOYMENT.md', readmeContent, 'utf-8');
     context.logger.info(chalk.green('✅ Created README-DEPLOYMENT.md'));
-    
+
     // Create project mode artifact
     const modeArtifact = {
       mode: 'production',
@@ -486,10 +485,10 @@ export async function deployProdEnvironment(
       buildFromSource: true,
       databaseUrl: envVars['DATABASE_URL'] ? 'configured' : 'not-configured',
     };
-    
+
     await mkdir('.supastorj', { recursive: true });
     await writeFile('.supastorj/project.json', JSON.stringify(modeArtifact, null, 2), 'utf-8');
-    
+
     outro(chalk.green(`
 ✅ Production deployment configured successfully!
 
@@ -500,7 +499,7 @@ Next steps:
 
 For systemd deployment, see README-DEPLOYMENT.md
 `));
-    
+
   } catch (error: any) {
     context.logger.error('Deployment failed:', error.message);
     process.exit(1);

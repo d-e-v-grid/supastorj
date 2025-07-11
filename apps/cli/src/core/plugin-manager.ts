@@ -55,10 +55,10 @@ export class PluginManager {
       // Import the plugin module
       const pluginUrl = pathToFileURL(resolve(pluginPath)).href;
       const pluginModule = await import(pluginUrl);
-      
+
       // Get the default export or named export 'plugin'
       const plugin: Plugin = pluginModule.default || pluginModule.plugin;
-      
+
       if (!plugin) {
         throw new Error(`No valid plugin export found in ${pluginPath}`);
       }
@@ -163,10 +163,10 @@ export class PluginManager {
       try {
         // Check if path exists
         await access(pluginPath, constants.R_OK);
-        
+
         // Read directory contents
         const entries = await readdir(pluginPath, { withFileTypes: true });
-        
+
         for (const entry of entries) {
           if (entry.isDirectory()) {
             // Look for index.js or plugin.js in the directory
@@ -248,7 +248,7 @@ export class PluginManager {
           this.registerHook(plugin.name, event, handler);
         };
         break;
-        
+
       default:
         this.context.logger.warn(`Unknown plugin type: ${plugin.type}`);
         break;

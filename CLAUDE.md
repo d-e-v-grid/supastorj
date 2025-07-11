@@ -1,169 +1,173 @@
-# Supastorj Project Context
+# Supastorj Project Guide
 
-## Project Overview
+Modern DevOps platform for autonomous management of object storage based on Supabase Storage and PostgreSQL.
 
-**Supastorj** is a modern DevOps platform for autonomous and flexible management of object storage based on Supabase Storage and PostgreSQL. It's designed as a monorepo using Yarn workspaces and Turborepo, providing a comprehensive toolkit for deploying, managing, and scaling Supabase Storage infrastructure.
+## Quick Start
 
-## Repository Structure
+```bash
+git clone <repository>
+cd supastorj
+yarn install
+yarn dev
+```
+
+## Technology Stack
+
+- **TypeScript** - Strict mode enabled
+- **Node.js** - v22+ (root), v20+ (CLI)
+- **Yarn 4.x** - Workspaces + Turborepo
+- **Commander.js** - CLI framework
+- **Ink** - React-based TUI
+- **Vitest** - Testing (80% coverage)
+- **Docker** - Container management
+- **Zod** - Schema validation
+- **Pino** - Structured logging
+
+## Project Structure
 
 ```
 supastorj/
 ├── apps/
-│   └── cli/                    # CLI application (@supastorj/cli)
-│       ├── bin/                # CLI entry point
+│   └── cli/
 │       ├── src/
-│       │   ├── adapters/       # Docker and service adapters
-│       │   ├── cli/            # CLI initialization
-│       │   ├── commands/       # Command implementations
-│       │   ├── components/     # Ink TUI components
-│       │   ├── config/         # Configuration management
-│       │   ├── core/           # Core services (logger, event bus, plugins)
-│       │   └── types/          # TypeScript definitions
-│       ├── templates/          # Docker compose templates
-│       └── tests/              # Test suite
-├── packages/                   # Shared packages (currently empty)
-├── docs/                       # Architecture documentation
-└── scripts/                    # Build and maintenance scripts
+│       │   ├── cli/         # Entry point
+│       │   ├── commands/    # CLI commands
+│       │   ├── components/  # React/Ink UI
+│       │   ├── config/      # Configuration
+│       │   ├── core/        # Core services
+│       │   ├── adapters/    # External services
+│       │   ├── types/       # TypeScript types
+│       │   └── utils/       # Utilities
+│       ├── templates/       # Docker templates
+│       └── tests/          # Test files
+├── packages/               # Shared packages
+├── docs/                   # Architecture docs
+└── scripts/                # Build scripts
 ```
 
-## Tech Stack
+## Development Commands
 
-### Core Technologies
-- **Language**: TypeScript (strict mode)
-- **Runtime**: Node.js >= 22 (monorepo), >= 20 (CLI)
-- **Package Manager**: Yarn 4.9.2 with workspaces
-- **Build System**: Turborepo
+### Root Commands
+```bash
+yarn dev            # Run all packages
+yarn build          # Build all packages
+yarn test           # Run all tests
+yarn typecheck      # Type checking
+yarn lint           # Run ESLint
+yarn fix:all        # Fix lint + format
+yarn link:global    # Install CLI globally
+```
 
-### CLI Technologies
-- **Framework**: Commander.js for command parsing
-- **TUI**: Ink (React for terminal)
-- **Prompts**: @clack/prompts for interactive inputs
-- **Docker**: Dockerode for container management
-- **Validation**: Zod for schema validation
-- **Logging**: Winston
-- **Testing**: Vitest
+### CLI Development
+```bash
+cd apps/cli
+yarn dev            # Hot reload
+yarn test           # Run tests
+yarn test:coverage  # With coverage
+yarn build          # Production build
+```
 
-### Infrastructure Stack
-- **PostgreSQL 16**: Primary database
-- **PgBouncer**: Connection pooling
-- **MinIO**: S3-compatible storage (optional)
-- **Supabase Storage API**: Core storage service
-- **Postgres-meta**: Database management API
-- **imgproxy**: Image transformation (optional)
-- **Redis**: Caching (optional)
+## Coding Standards
 
-## Key Commands
+### File Naming
+- **TypeScript**: `kebab-case.ts`
+- **Tests**: `[name].test.ts`
+- **React**: `component-name.tsx`
 
-### CLI Commands
-- `supastorj init` - Iinitializes project and configuration
-- `supastorj start` - Start services
-- `supastorj stop` - Stop services
-- `supastorj status` - Show service status (TUI dashboard)
-- `supastorj logs` - View service logs
-- `supastorj debug` - Debug information
+### Imports
+```typescript
+// External (sorted by length)
+import { z } from 'zod';
+import { join } from 'path';
 
-### Development Commands
-- `yarn dev` - Start development mode
-- `yarn build` - Build all packages
-- `yarn test` - Run tests
-- `yarn lint` - Run linting
-- `yarn typecheck` - Type checking
-
-## Architecture Highlights
-
-### Plugin System
-- Extensible command architecture
-- Plugin types: Command, Service, UI, Hook
-- Event-driven communication
-- Dynamic plugin loading
-
-### Configuration Management
-- YAML-based configuration (`supastorj.config.yaml`)
-- Environment inheritance
-- Multiple environment support (dev/staging/prod)
-- Secure secret generation
-
-### Service Management
-- Docker Compose orchestration for development
-- Bare metal deployment for production
-- Health check monitoring
-- Real-time log streaming
-- Service scaling support
-
-## Recent Changes
-
-### PostgreSQL Authentication Fix
-- Added explicit environment variable passing to `storage` and `postgres-meta` containers
-- Updated initialization SQL script to ensure proper permissions
-- Fixed authentication issues between services
-
-### Docker Compose Updates
-- Enhanced service dependency management
-- Improved health check configurations
-- Added explicit environment variable declarations
-
-## Current Development Status
-
-### Implemented
-- ✅ CLI with all core commands
-- ✅ Docker-based service orchestration
-- ✅ Interactive TUI for status monitoring
-- ✅ Configuration management
-- ✅ Plugin architecture
-- ✅ Audit logging
-- ✅ Multi-environment support
-
-### Planned
-- 🔲 Backend API server (REST/GraphQL)
-- 🔲 Web dashboard (React/MUI)
-- 🔲 Kubernetes operator
-- 🔲 Multi-region support
-- 🔲 Advanced monitoring
-
-## Development Guidelines
+// Internal (always .js extension)
+import { Environment } from '../types/index.js';
+```
 
 ### Code Style
-- TypeScript with strict mode
-- ESLint + Prettier for formatting
-- No inline comments unless requested
-- Follow existing patterns in codebase
+- Semicolons: Always
+- Quotes: Single
+- Indent: 2 spaces
+- Line width: 120
+- Async/await preferred
+
+### TypeScript
+- Strict mode enabled
+- Use `.js` extension for imports
+- Prefer interfaces
+- Use Zod for validation
+- Centralize types in `types/index.ts`
 
 ### Testing
-- Unit tests with Vitest
-- Coverage reporting
-- Integration tests for critical paths
+```typescript
+describe('ComponentName', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
-### Git Workflow
-- Conventional commits
-- Feature branches
-- PR-based development
+  it('should work correctly', () => {
+    // test
+  });
+});
+```
 
-## Important Files
+### Logging
+```typescript
+context.logger.info('Starting', { service });
+context.logger.error('Failed:', error.message);
+context.logger.audit('action', { userId });
+```
 
-- `/apps/cli/src/commands/` - CLI command implementations
-- `/apps/cli/templates/docker-compose.yml` - Service definitions
-- `/apps/cli/src/config/config-manager.ts` - Configuration logic
-- `/apps/cli/src/adapters/docker-adapter.ts` - Docker integration
-- `/docs/ARCHITECTURE.md` - Detailed architecture documentation
+## Architecture
 
-## Environment Variables
+- **Plugin System** - Extensible functionality
+- **Event-Driven** - Decoupled communication
+- **Adapter Pattern** - External services
+- **Command Pattern** - Modular CLI
 
-Key environment variables managed by the system:
-- `JWT_SECRET`, `ANON_KEY`, `SERVICE_KEY` - Authentication keys
-- `STORAGE_BACKEND` - Storage backend (file/s3)
-- `IMAGE_TRANSFORMATION_ENABLED` - Enable imgproxy service
+## Services
 
-## Notes for Development
+1. **PostgreSQL 16** - Database
+2. **PgBouncer** - Connection pooling
+3. **MinIO** - S3 storage
+4. **Supabase Storage** - Storage API
+5. **Postgres-meta** - Schema management
+6. **imgproxy** - Image transformation
+7. **Redis** - Caching (optional)
 
-1. The project uses ESM modules (type: "module")
-2. Commands must have proper error handling and logging
-3. All async operations should be properly awaited
-4. Docker Compose v2 is preferred over v1
-5. Services should have health checks configured
-6. Sensitive data must never be logged
+## Common Tasks
 
-## Contact & Support
+### New CLI Command
+1. Create file in `src/commands/`
+2. Implement command interface
+3. Register in CLI router
+4. Add tests
 
-- Repository: https://github.com/d-e-v-grid/supastorj
-- Author: DevGrid
-- License: MIT
+### New Service
+1. Define configuration schema
+2. Create adapter
+3. Add Docker template
+4. Update types
+5. Add health checks
+
+## Troubleshooting
+
+### Import Errors
+Ensure `.js` extension on local imports
+
+### Type Errors
+Run `yarn typecheck`
+
+### Test Failures
+Check for unmocked dependencies
+
+### Build Errors
+```bash
+yarn clean && yarn build
+```
+
+## Future Components
+
+- **admin-api** - REST/GraphQL backend
+- **dashboard** - React web UI
+- **sdk** - Client libraries

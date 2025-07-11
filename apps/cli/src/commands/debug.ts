@@ -2,9 +2,8 @@
  * Debug command - Debug container issues
  */
 
-import { $ } from 'zx';
-import chalk from 'chalk';
 import { join } from 'path';
+import { $, chalk } from 'zx';
 import { existsSync } from 'fs';
 
 import { DockerAdapter } from '../adapters/docker-adapter.js';
@@ -43,7 +42,7 @@ export const debugCommand: CommandDefinition = {
         }
 
         console.log(chalk.bold(`\nDebugging ${options.service}:\n`));
-        
+
         // Get container info
         const info = await adapter.getInfo();
         if (!info) {
@@ -56,13 +55,13 @@ export const debugCommand: CommandDefinition = {
         console.log(`  Status: ${info.status}`);
         console.log(`  Image: ${info.image}`);
         console.log(`  Created: ${new Date(info.created).toLocaleString()}`);
-        
+
         // Get health status
         const health = await adapter.healthcheck();
         console.log(chalk.cyan('\nHealth Status:'));
         console.log(`  Healthy: ${health.healthy ? chalk.green('Yes') : chalk.red('No')}`);
         console.log(`  Message: ${health.message}`);
-        
+
         if (health.details?.['log']) {
           console.log(chalk.cyan('\nHealth Check Log:'));
           for (const entry of health.details['log'].slice(-5)) {
@@ -73,30 +72,30 @@ export const debugCommand: CommandDefinition = {
         // Check for common configuration issues
         if (adapter.name === 'postgres' || adapter.name === 'storage' || adapter.name === 'postgres-meta') {
           console.log(chalk.cyan('\nConfiguration Check:'));
-          
+
           try {
             // Configure zx to not print commands and capture output
             $.verbose = false;
             const result = await $`docker inspect supastorj-${adapter.name}-1 --format '{{json .Config.Env}}'`;
             const stdout = result.stdout;
-            
+
             const envVars = JSON.parse(stdout) as string[];
-            
+
             // Check for password consistency
             const passwords = new Map<string, string>();
             const passwordVars = ['POSTGRES_PASSWORD', 'PG_META_DB_PASSWORD'];
-            
+
             for (const env of envVars) {
               const parts = env.split('=');
               if (parts.length < 2) continue;
-              
+
               const key = parts[0];
               const value = parts.slice(1).join('='); // Handle values with = in them
-              
+
               if (key && passwordVars.includes(key) && value) {
                 passwords.set(key, value);
               }
-              
+
               // Check DATABASE_URL for password
               if (key === 'DATABASE_URL' && value && value.includes('postgresql://')) {
                 const match = value.match(/postgresql:\/\/[^:]+:([^@]+)@/);
@@ -105,7 +104,7 @@ export const debugCommand: CommandDefinition = {
                 }
               }
             }
-            
+
             // Compare passwords
             const uniquePasswords = new Set(passwords.values());
             if (uniquePasswords.size > 1) {
@@ -117,14 +116,14 @@ export const debugCommand: CommandDefinition = {
             } else {
               console.log(chalk.green('  ✓ Password configuration is consistent'));
             }
-            
+
             // Check required environment variables
             const requiredVars = {
               'postgres': ['POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB'],
               'storage': ['DATABASE_URL', 'JWT_SECRET', 'ANON_KEY', 'SERVICE_KEY'],
               'postgres-meta': ['PG_META_DB_HOST', 'PG_META_DB_USER', 'PG_META_DB_PASSWORD'],
             };
-            
+
             if (requiredVars[adapter.name]) {
               console.log(chalk.cyan('\n  Required Environment Variables:'));
               for (const reqVar of requiredVars[adapter.name]) {
@@ -140,7 +139,7 @@ export const debugCommand: CommandDefinition = {
             console.log(chalk.yellow('  Could not inspect container environment'));
           }
         }
-        
+
         // Get recent logs
         console.log(chalk.cyan('\nRecent Logs:'));
         const logs = adapter.logs({ tail: 50 });
@@ -153,11 +152,11 @@ export const debugCommand: CommandDefinition = {
         for (const adapter of adapters) {
           const status = await adapter.getStatus();
           const health = await adapter.healthcheck();
-          
+
           console.log(chalk.cyan(`${adapter.name}:`));
           console.log(`  Status: ${status}`);
           console.log(`  Health: ${health.healthy ? chalk.green('Healthy') : chalk.red(health.message)}`);
-          
+
           if (!health.healthy && health.details?.['log']) {
             console.log('  Recent health checks:');
             for (const entry of health.details['log'].slice(-3)) {

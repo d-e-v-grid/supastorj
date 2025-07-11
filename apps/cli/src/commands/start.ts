@@ -2,8 +2,8 @@ import { join } from 'path';
 import { $, fs, chalk } from 'zx';
 import { createServer } from 'net';
 
-import { CommandContext, CommandDefinition, StorageBackendType } from '../types/index.js';
 import { ConfigManager } from '../config/config-manager.js';
+import { CommandContext, CommandDefinition, StorageBackendType } from '../types/index.js';
 
 // Set zx options
 $.verbose = false;
@@ -27,14 +27,14 @@ async function getRequiredPorts(composeFile: string): Promise<number[]> {
   const portRegex = /(?:^|\s)(?:-\s*)?["']?(\d+):(\d+)["']?/gm;
   const ports: number[] = [];
   let match;
-  
+
   while ((match = portRegex.exec(content)) !== null) {
     const hostPort = parseInt(match[1]);
     if (!ports.includes(hostPort)) {
       ports.push(hostPort);
     }
   }
-  
+
   return ports;
 }
 
@@ -60,7 +60,7 @@ async function getDeploymentMode(configManager: ConfigManager): Promise<string> 
 // Load environment variables
 async function loadEnvVars(): Promise<Record<string, string>> {
   const envVars: Record<string, string> = {};
-  
+
   if (await fs.pathExists('.env')) {
     const envContent = await fs.readFile('.env', 'utf-8');
     envContent.split('\n').forEach(line => {
@@ -70,7 +70,7 @@ async function loadEnvVars(): Promise<Record<string, string>> {
       }
     });
   }
-  
+
   return envVars;
 }
 
@@ -116,13 +116,13 @@ export const startCommand: CommandDefinition = {
     try {
       // Check if project is initialized
       const configManager = new ConfigManager();
-      
+
       const isInitialized = await configManager.isInitialized();
       if (!isInitialized) {
         context.logger.error('Project not initialized. Run "supastorj init" first.');
         process.exit(1);
       }
-      
+
       // Load configuration
       const config = await configManager.load();
 
@@ -174,13 +174,13 @@ export const startCommand: CommandDefinition = {
         context.logger.info('Checking port availability...');
         const requiredPorts = await getRequiredPorts('docker-compose.yml');
         const occupiedPorts: number[] = [];
-        
+
         for (const port of requiredPorts) {
           if (!(await isPortAvailable(port))) {
             occupiedPorts.push(port);
           }
         }
-        
+
         if (occupiedPorts.length > 0) {
           context.logger.error('Port conflict detected');
           context.logger.error(`The following ports are already in use: ${occupiedPorts.join(', ')}`);
@@ -199,12 +199,12 @@ export const startCommand: CommandDefinition = {
             profiles.push('s3');
             context.logger.info('Using S3 storage backend with MinIO');
           }
-          
+
           if (configManager.isServiceEnabled('imgproxy')) {
             profiles.push('imgproxy');
             context.logger.info('Image transformation enabled, including imgproxy service');
           }
-          
+
           if (configManager.isServiceEnabled('redis')) {
             profiles.push('redis');
             context.logger.info('Redis caching enabled');
@@ -213,29 +213,29 @@ export const startCommand: CommandDefinition = {
 
         // Start services
         context.logger.info('Starting services...');
-        
+
         const composeCmd = useDockerCompose ? 'docker-compose' : 'docker';
         const composeArgs = useDockerCompose ? [] : ['compose'];
-        
+
         // Add compose file and project name
         composeArgs.push('-f', 'docker-compose.yml', '-p', projectName);
-        
+
         // Add profiles
         for (const profile of profiles) {
           composeArgs.push('--profile', profile);
         }
-        
+
         // Add up command
         composeArgs.push('up');
-        
+
         if (!attachMode) {
           composeArgs.push('-d');
         }
-        
+
         if (options.build) {
           composeArgs.push('--build');
         }
-        
+
         if (options.scale) {
           const scales = options.scale.split(',');
           for (const scale of scales) {
@@ -245,19 +245,19 @@ export const startCommand: CommandDefinition = {
 
         if (attachMode) {
           context.logger.info('Starting services in attached mode (press Ctrl+C to stop)...');
-          
+
           // Run in attached mode with inherited stdio
           await $`${composeCmd} ${composeArgs}`.pipe(process.stdout);
         } else {
           try {
             await $`${composeCmd} ${composeArgs}`;
             context.logger.info(chalk.green('✓') + ' Services started successfully');
-            
+
             // Wait for services to be healthy
             context.logger.info('Waiting for services to be healthy...');
             await $`sleep 5`;
             context.logger.info(chalk.green('✓') + ' All services started successfully!');
-            
+
             context.logger.info(`Run ${chalk.cyan('supastorj status')} to check service status`);
             context.logger.info(`Run ${chalk.cyan('supastorj logs -f')} to see service logs`);
           } catch (error) {
@@ -265,17 +265,17 @@ export const startCommand: CommandDefinition = {
             throw error;
           }
         }
-        
-      // Production mode
+
+        // Production mode
       } else if (deploymentMode === 'production') {
         const useDocker = envVars['USE_DOCKER'] === 'true';
-        
+
         // Create logs directory if it doesn't exist
         await fs.ensureDir('logs');
-        
+
         if (useDocker) {
           context.logger.info('Starting Storage API with Docker...');
-          
+
           // Check if Docker is installed
           try {
             await $`docker --version`;
@@ -283,10 +283,10 @@ export const startCommand: CommandDefinition = {
             context.logger.error('Docker is not installed!');
             process.exit(1);
           }
-          
+
           // Pull latest image if needed
           await $`docker pull supabase/storage-api:v1.13.1`;
-          
+
           // Stop existing container if running
           try {
             await $`docker stop storage-api`;
@@ -294,7 +294,7 @@ export const startCommand: CommandDefinition = {
           } catch {
             // Container might not exist, that's ok
           }
-          
+
           // Run container
           const serverPort = envVars['SERVER_PORT'] || '5000';
           const dockerArgs = [
@@ -302,11 +302,11 @@ export const startCommand: CommandDefinition = {
             attachMode ? '--rm' : '-d',
             '--name', 'storage-api',
           ];
-          
+
           if (!attachMode) {
             dockerArgs.push('--restart', 'unless-stopped');
           }
-          
+
           dockerArgs.push(
             '-p', `${serverPort}:5000`,
             '--env-file', '.env',
@@ -314,7 +314,7 @@ export const startCommand: CommandDefinition = {
             '-v', `${process.cwd()}/data/storage:/var/lib/storage`,
             'supabase/storage-api:v1.13.1'
           );
-          
+
           if (attachMode) {
             context.logger.info('Starting Storage API in attached mode (press Ctrl+C to stop)...');
             await $`docker ${dockerArgs}`.pipe(process.stdout);
@@ -325,21 +325,21 @@ export const startCommand: CommandDefinition = {
           }
         } else {
           context.logger.info('Starting Storage API from source...');
-          
+
           // Check if storage directory exists
           if (!await fs.pathExists('./storage')) {
             context.logger.error('./storage directory not found!');
             context.logger.error('Run "supastorj init prod" with source build option first.');
             process.exit(1);
           }
-          
+
           // Check if built
           if (!await fs.pathExists('./storage/dist/start/server.js')) {
             context.logger.error('Storage server not built!');
             context.logger.error('Run "npm run build" in the storage directory.');
             process.exit(1);
           }
-          
+
           // Run migrations
           context.logger.info('Running database migrations...');
           try {
@@ -347,7 +347,7 @@ export const startCommand: CommandDefinition = {
           } catch {
             context.logger.warn('Migration may have already been applied');
           }
-          
+
           // Start the server
           if (attachMode) {
             context.logger.info('Starting server in attached mode (press Ctrl+C to stop)...');
@@ -357,13 +357,13 @@ export const startCommand: CommandDefinition = {
             // Start in background using nohup
             const logFile = join(process.cwd(), 'logs/storage-api.log');
             const pidFile = join(process.cwd(), 'storage-api.pid');
-            
+
             // Use bash to run the command in background
             const result = await $`bash -c "cd storage && nohup node dist/start/server.js > ${logFile} 2>&1 & echo $!"`;
             const pid = result.stdout.trim();
-            
+
             await fs.writeFile(pidFile, pid, 'utf-8');
-            
+
             context.logger.info(chalk.green('✓') + ' Storage API started!');
             context.logger.info(`Server: http://${envVars['SERVER_HOST'] || '0.0.0.0'}:${envVars['SERVER_PORT'] || '5000'}`);
             context.logger.info(`PID: ${pid}`);
@@ -374,10 +374,10 @@ export const startCommand: CommandDefinition = {
         context.logger.error(`Unknown deployment mode: ${deploymentMode}`);
         process.exit(1);
       }
-      
+
     } catch (error: any) {
       context.logger.error('Failed to start services');
-      
+
       if (error.stderr) {
         context.logger.error(error.stderr.toString());
       } else if (error.message) {
@@ -385,7 +385,7 @@ export const startCommand: CommandDefinition = {
       } else {
         context.logger.error(String(error));
       }
-      
+
       process.exit(1);
     }
   },

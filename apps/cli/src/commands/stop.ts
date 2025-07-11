@@ -1,7 +1,7 @@
 import { $, fs, chalk } from 'zx';
 
-import { CommandContext, CommandDefinition } from '../types/index.js';
 import { ConfigManager } from '../config/config-manager.js';
+import { CommandContext, CommandDefinition } from '../types/index.js';
 
 // Set zx options
 $.verbose = false;
@@ -28,7 +28,7 @@ async function getDeploymentMode(configManager: ConfigManager): Promise<string> 
 // Load environment variables
 async function loadEnvVars(): Promise<Record<string, string>> {
   const envVars: Record<string, string> = {};
-  
+
   if (await fs.pathExists('.env')) {
     const envContent = await fs.readFile('.env', 'utf-8');
     envContent.split('\n').forEach(line => {
@@ -38,7 +38,7 @@ async function loadEnvVars(): Promise<Record<string, string>> {
       }
     });
   }
-  
+
   return envVars;
 }
 
@@ -67,15 +67,15 @@ export const stopCommand: CommandDefinition = {
       // Check if project is initialized
       const configManager = new ConfigManager();
       const isInitialized = await configManager.isInitialized();
-      
+
       if (!isInitialized) {
         context.logger.error('Project not initialized. Run "supastorj init" first.');
         process.exit(1);
       }
-      
+
       // Load configuration
       const config = await configManager.load();
-      
+
       // Load environment variables if .env exists
       const envVars = await loadEnvVars();
 
@@ -88,7 +88,7 @@ export const stopCommand: CommandDefinition = {
 
       // Development mode - Use Docker Compose
       if (deploymentMode === 'development' || deploymentMode === 'staging') {
-        
+
         // Check if docker-compose.yml exists
         if (!await fs.pathExists('docker-compose.yml')) {
           context.logger.error('docker-compose.yml not found!');
@@ -113,12 +113,12 @@ export const stopCommand: CommandDefinition = {
 
         // Stop all services
         context.logger.info('Stopping Docker Compose services...');
-        
+
         const composeCmd = useDockerCompose ? 'docker-compose' : 'docker';
         const composeArgs = useDockerCompose ? [] : ['compose'];
-        
+
         composeArgs.push('-f', 'docker-compose.yml', '-p', projectName, 'down');
-        
+
         if (options.volumes) {
           composeArgs.push('-v');
           context.logger.warn('Removing volumes - all data will be lost!');
@@ -131,20 +131,20 @@ export const stopCommand: CommandDefinition = {
           context.logger.error('Failed to stop services');
           throw error;
         }
-        
-      // Production mode
+
+        // Production mode
       } else if (deploymentMode === 'production') {
-        
+
         // Check if using Docker or direct execution
         const useDocker = envVars['USE_DOCKER'] === 'true';
-        
+
         if (useDocker) {
           context.logger.info('Stopping Storage API Docker container...');
-          
+
           // Check if container exists
           try {
             const containerExists = await $`docker ps -a --format '{{.Names}}' | grep -q '^storage-api$'`.exitCode === 0;
-            
+
             if (containerExists) {
               // Stop container
               try {
@@ -161,24 +161,24 @@ export const stopCommand: CommandDefinition = {
           } catch {
             context.logger.warn('No running containers found');
           }
-          
+
         } else {
           context.logger.info('Stopping Storage API process...');
-          
+
           const pidFile = 'storage-api.pid';
-          
+
           if (await fs.pathExists(pidFile)) {
             try {
               const pid = (await fs.readFile(pidFile, 'utf-8')).trim();
-              
+
               // Check if process is running
               try {
                 await $`kill -0 ${pid}`;
-                
+
                 // Process is running, kill it
                 await $`kill ${pid}`;
                 context.logger.info(`Stopping Storage API (PID: ${pid})...`);
-                
+
                 // Wait for process to stop
                 let count = 0;
                 while (count < 10) {
@@ -191,7 +191,7 @@ export const stopCommand: CommandDefinition = {
                     break;
                   }
                 }
-                
+
                 // Force kill if still running
                 try {
                   await $`kill -0 ${pid}`;
@@ -200,12 +200,12 @@ export const stopCommand: CommandDefinition = {
                 } catch {
                   // Process already stopped
                 }
-                
+
                 context.logger.info(chalk.green('✓') + ` Storage API stopped (PID: ${pid})`);
               } catch {
                 context.logger.warn('Storage API not running (stale PID file)');
               }
-              
+
               // Remove PID file
               await fs.remove(pidFile);
             } catch (error) {
@@ -216,7 +216,7 @@ export const stopCommand: CommandDefinition = {
             try {
               const result = await $`pgrep -f "node.*storage.*server.js"`.text();
               const pids = result.trim().split('\n').filter(p => p);
-              
+
               if (pids.length > 0) {
                 context.logger.info(`Found storage process(es): ${pids.join(', ')}`);
                 for (const pid of pids) {
@@ -236,15 +236,15 @@ export const stopCommand: CommandDefinition = {
             }
           }
         }
-        
+
       } else {
         context.logger.error(`Unknown deployment mode: ${deploymentMode}`);
         process.exit(1);
       }
-      
+
     } catch (error: any) {
       context.logger.error('Failed to stop services');
-      
+
       if (error.stderr) {
         context.logger.error(error.stderr.toString());
       } else if (error.message) {
@@ -252,7 +252,7 @@ export const stopCommand: CommandDefinition = {
       } else {
         context.logger.error(String(error));
       }
-      
+
       process.exit(1);
     }
   },

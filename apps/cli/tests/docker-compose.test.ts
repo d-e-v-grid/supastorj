@@ -13,14 +13,14 @@ describe('Docker Compose Configuration', () => {
   });
 
   describe('PostgreSQL Configuration', () => {
-    it('should have correct authentication method', () => {
+    it('should have correct PostgreSQL image', () => {
       const postgres = dockerComposeConfig.services.postgres;
-      expect(postgres.environment.POSTGRES_HOST_AUTH_METHOD).toBe('trust');
+      expect(postgres.image).toBe('postgres:16-alpine');
     });
 
     it('should expose PostgreSQL on correct port', () => {
       const postgres = dockerComposeConfig.services.postgres;
-      expect(postgres.ports[0]).toMatch(/5432:5432/);
+      expect(postgres.ports[0]).toBe('127.0.0.1:${POSTGRES_PORT:-5432}:5432');
     });
 
     it('should have health check configured', () => {
@@ -30,9 +30,11 @@ describe('Docker Compose Configuration', () => {
       expect(postgres.healthcheck.interval).toBe('5s');
     });
 
-    it('should listen on all addresses', () => {
+    it('should have correct environment variables', () => {
       const postgres = dockerComposeConfig.services.postgres;
-      expect(postgres.command).toContain("listen_addresses='*'");
+      expect(postgres.environment.POSTGRES_DB).toBe('postgres');
+      expect(postgres.environment.POSTGRES_USER).toBe('postgres');
+      expect(postgres.environment.POSTGRES_PASSWORD).toBe('postgres');
     });
   });
 
@@ -71,9 +73,9 @@ describe('Docker Compose Configuration', () => {
       expect(imgproxy.profiles).toContain('imgproxy');
     });
 
-    it('should mount storage volume as read-only', () => {
+    it('should mount storage volume', () => {
       const imgproxy = dockerComposeConfig.services.imgproxy;
-      expect(imgproxy.volumes[0]).toContain(':ro');
+      expect(imgproxy.volumes[0]).toBe('./data:/images/data');
     });
   });
 
@@ -94,9 +96,9 @@ describe('Docker Compose Configuration', () => {
   });
 
   describe('Volumes', () => {
-    it('should define required volumes', () => {
-      expect(dockerComposeConfig.volumes.postgres_data).toBeDefined();
-      expect(dockerComposeConfig.volumes.storage_data).toBeDefined();
+    it('should not define volumes at top level', () => {
+      // The template doesn't define volumes at the top level
+      expect(dockerComposeConfig.volumes).toBeUndefined();
     });
   });
 

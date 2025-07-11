@@ -1,8 +1,7 @@
 /**
  * Init command - Initialize Supastorj project in dev or production mode
  */
-
-import chalk from 'chalk';
+import { chalk } from 'zx';
 import { text, select } from '@clack/prompts';
 
 import { CommandContext, CommandDefinition } from '../../types/index.js';
@@ -57,7 +56,7 @@ export const initCommand: CommandDefinition = {
     try {
       // Determine initialization mode
       let mode = options.mode;
-      
+
       // First, always ask for project name unless in yes mode
       let projectName = 'supastorj';
       if (!options.yes) {
@@ -67,7 +66,7 @@ export const initCommand: CommandDefinition = {
           defaultValue: 'supastorj',
         }) as string;
       }
-      
+
       // If mode is not explicitly set, ask the user
       if (!options.yes && !['dev', 'prod'].includes(mode)) {
         mode = await select({

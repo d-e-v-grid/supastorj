@@ -10,10 +10,31 @@ import { logsCommand } from '../../src/commands/logs.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
 import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
-import { ServiceStatus, CommandContext } from '../../src/types/index.js';
+import { ServiceStatus, CommandContext, Environment } from '../../src/types/index.js';
 
 vi.mock('fs');
 vi.mock('../../src/adapters/docker-adapter.js');
+
+// Mock config manager
+vi.mock('../../src/config/config-manager.js', () => ({
+  ConfigManager: Object.assign(
+    vi.fn().mockImplementation(() => ({
+      load: vi.fn().mockResolvedValue(undefined),
+      getConfig: vi.fn().mockReturnValue({
+        projectName: 'test-project',
+        environment: 'development',
+      }),
+    })),
+    {
+      generateDefault: vi.fn().mockReturnValue({
+        projectName: 'test-project',
+        environment: 'development',
+        version: '1.0.0',
+        initialized: true,
+      }),
+    }
+  ),
+}));
 
 describe('Logs Command', () => {
   let context: CommandContext;
@@ -25,8 +46,11 @@ describe('Logs Command', () => {
     vi.clearAllMocks();
     
     context = {
-      config: ConfigManager.generateDefault(),
-      environment: 'development',
+      config: ConfigManager.generateDefault({
+        projectName: 'test-project',
+        environment: Environment.Development,
+      }),
+      environment: Environment.Development,
       logger: new LoggerImpl(),
       eventBus: new EventBusImpl(),
     };
@@ -72,7 +96,7 @@ describe('Logs Command', () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     
     try {
-      await logsCommand.action(context, [], {});
+      await logsCommand.action(context, {});
     } catch (error: any) {
       expect(error.message).toBe('process.exit');
     }
@@ -90,122 +114,157 @@ describe('Logs Command', () => {
     };
     mockAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    await logsCommand.action(context, [], { follow: false, tail: 10 });
+    await logsCommand.action(context, { follow: false, tail: 10 });
 
-    expect(mockAdapter.logs).toHaveBeenCalledWith({ follow: false, tail: 10 });
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[postgres]')
-    );
+    expect(mockAdapter.logs).toHaveBeenCalledWith({ 
+      follow: false, 
+      tail: 10,
+      timestamps: false,
+      onLog: expect.any(Function)
+    });
   });
 
   it('should show logs for specific service', async () => {
-    const mockLogGenerator = async function* () {
-      yield '2024-01-01 12:00:00 [INFO] Service started';
+    const mockPostgresAdapter = {
+      name: 'postgres',
+      type: 'postgres',
+      logs: vi.fn(),
+      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
     };
-    mockAdapter.logs.mockReturnValue(mockLogGenerator());
+    const mockStorageAdapter = {
+      name: 'storage',
+      type: 'storage',
+      logs: vi.fn(),
+      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
+    };
+    
+    vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([
+      mockPostgresAdapter,
+      mockStorageAdapter,
+    ]);
 
-    await logsCommand.action(context, ['postgres'], { follow: false });
+    const mockLogGenerator = async function* () {
+      yield 'postgres log line';
+    };
+    mockPostgresAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    expect(mockAdapter.logs).toHaveBeenCalled();
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[postgres]')
-    );
+    await logsCommand.action(context, { follow: false, tail: 10 }, ['postgres']);
+
+    expect(mockPostgresAdapter.logs).toHaveBeenCalled();
+    expect(mockStorageAdapter.logs).not.toHaveBeenCalled();
   });
 
   it('should follow logs with --follow option', async () => {
     const mockLogGenerator = async function* () {
-      yield '2024-01-01 12:00:00 [INFO] Log line 1';
-      yield '2024-01-01 12:00:01 [INFO] Log line 2';
+      yield 'log line 1';
+      yield 'log line 2';
     };
     mockAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    await logsCommand.action(context, ['postgres'], { follow: true });
+    await logsCommand.action(context, { follow: true, tail: 10 });
 
-    expect(mockAdapter.logs).toHaveBeenCalledWith({ follow: true, tail: 100 });
+    expect(mockAdapter.logs).toHaveBeenCalledWith({ 
+      follow: true, 
+      tail: 10,
+      timestamps: false,
+      onLog: expect.any(Function)
+    });
   });
 
   it('should show timestamps with --timestamps option', async () => {
     const mockLogGenerator = async function* () {
-      yield '2024-01-01T12:00:00.000Z Container log message';
+      yield '2024-01-01T12:00:00.000Z log line';
     };
     mockAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    await logsCommand.action(context, ['postgres'], { timestamps: true });
+    await logsCommand.action(context, { follow: false, tail: 10, timestamps: true });
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('2024-01-01T12:00:00.000Z')
-    );
+    expect(mockAdapter.logs).toHaveBeenCalledWith({ 
+      follow: false, 
+      tail: 10,
+      timestamps: true,
+      onLog: expect.any(Function)
+    });
   });
 
   it('should limit log lines with --tail option', async () => {
     const mockLogGenerator = async function* () {
-      yield 'Log line 1';
-      yield 'Log line 2';
-      yield 'Log line 3';
+      yield 'log line';
     };
     mockAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    await logsCommand.action(context, ['postgres'], { tail: 5 });
+    await logsCommand.action(context, { follow: false, tail: 50 });
 
-    expect(mockAdapter.logs).toHaveBeenCalledWith({ follow: undefined, tail: 5 });
+    expect(mockAdapter.logs).toHaveBeenCalledWith({ 
+      follow: false, 
+      tail: 50,
+      timestamps: false,
+      onLog: expect.any(Function)
+    });
   });
 
   it('should handle service not found', async () => {
-    await logsCommand.action(context, ['nonexistent'], {});
+    vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([mockAdapter]);
 
-    expect(context.logger.warn).toHaveBeenCalledWith(
+    try {
+      await logsCommand.action(context, { follow: false }, ['nonexistent']);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
+
+    expect(context.logger.error).toHaveBeenCalledWith(
       'Service not found: nonexistent'
     );
+    expect(mockExit).toHaveBeenCalledWith(1);
   });
 
   it('should handle multiple services', async () => {
-    const postgresAdapter = {
+    const mockPostgresAdapter = {
       name: 'postgres',
       type: 'postgres',
-      logs: vi.fn().mockReturnValue((async function* () {
-        yield 'Postgres log';
-      })()),
+      logs: vi.fn(),
+      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
+    };
+    const mockStorageAdapter = {
+      name: 'storage',
+      type: 'storage',
+      logs: vi.fn(),
       getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
     };
     
-    const storageAdapter = {
-      name: 'storage',
-      type: 'storage', 
-      logs: vi.fn().mockReturnValue((async function* () {
-        yield 'Storage log';
-      })()),
-      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
-    };
-
     vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([
-      postgresAdapter,
-      storageAdapter,
+      mockPostgresAdapter,
+      mockStorageAdapter,
     ]);
 
-    await logsCommand.action(context, ['postgres', 'storage'], {});
+    const mockLogGenerator1 = async function* () {
+      yield 'postgres log';
+    };
+    const mockLogGenerator2 = async function* () {
+      yield 'storage log';
+    };
+    mockPostgresAdapter.logs.mockReturnValue(mockLogGenerator1());
+    mockStorageAdapter.logs.mockReturnValue(mockLogGenerator2());
 
-    expect(postgresAdapter.logs).toHaveBeenCalled();
-    expect(storageAdapter.logs).toHaveBeenCalled();
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[postgres]')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('[storage]')
-    );
+    await logsCommand.action(context, { follow: false }, ['postgres', 'storage']);
+
+    expect(mockPostgresAdapter.logs).toHaveBeenCalled();
+    expect(mockStorageAdapter.logs).toHaveBeenCalled();
   });
 
   it('should handle log stream errors', async () => {
     const mockLogGenerator = async function* () {
-      yield 'First log line';
+      yield 'first log';
       throw new Error('Stream error');
     };
     mockAdapter.logs.mockReturnValue(mockLogGenerator());
 
-    await logsCommand.action(context, ['postgres'], {});
+    // The command should handle errors gracefully and continue
+    await logsCommand.action(context, { follow: false });
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      'Error streaming logs for postgres:',
-      expect.any(Error)
+      expect.stringContaining('Error reading logs'),
+      expect.objectContaining({ service: 'postgres' })
     );
   });
 });

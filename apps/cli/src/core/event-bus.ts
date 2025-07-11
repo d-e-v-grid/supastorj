@@ -106,9 +106,9 @@ export class EventBusImpl implements EventBus {
     return new Promise((resolve, reject) => {
       const timer = timeout
         ? setTimeout(() => {
-            this.off(event, handler);
-            reject(new Error(`Timeout waiting for event: ${event}`));
-          }, timeout)
+          this.off(event, handler);
+          reject(new Error(`Timeout waiting for event: ${event}`));
+        }, timeout)
         : null;
 
       const handler: EventHandler<T> = (data) => {

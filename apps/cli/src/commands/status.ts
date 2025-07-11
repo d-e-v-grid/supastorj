@@ -2,13 +2,12 @@
  * Status command - Show service status
  */
 
-import { $ } from 'zx';
-import chalk from 'chalk';
 import React from 'react';
 import { join } from 'path';
+import { $, chalk } from 'zx';
 import { existsSync } from 'fs';
-import ora, { type Ora } from 'ora';
 import { readFile } from 'fs/promises';
+import { spinner } from '@clack/prompts';
 import { Box, Text, render, useApp, useInput, useStdin } from 'ink';
 
 import { ConfigManager } from '../config/config-manager.js';
@@ -43,31 +42,28 @@ export const statusCommand: CommandDefinition = {
     },
   ],
   action: async (context: CommandContext, options: any) => {
-    const spinner = ora();
-    
     try {
       // Load configuration
       const configManager = new ConfigManager();
       await configManager.load();
       const config = configManager.getConfig();
-      
+
       // Determine environment
       const environment = options.environment || config.environment || Environment.Development;
-      
+
       // Handle based on environment
       if (environment === Environment.Development || environment === Environment.Staging) {
         // Use Docker Compose status
-        await showDockerComposeStatus(context, options, spinner);
+        await showDockerComposeStatus(context, options);
       } else if (environment === Environment.Production) {
         // Use production status
-        await showProductionStatus(context, options, spinner);
+        await showProductionStatus(context, options);
       } else {
         throw new Error(`Unknown environment: ${environment}`);
       }
-      
+
     } catch (error: any) {
-      spinner.fail('Failed to check service status');
-      
+
       // Extract meaningful error message
       if (error.stderr) {
         context.logger.error('Error:', error.stderr.toString());
@@ -76,7 +72,7 @@ export const statusCommand: CommandDefinition = {
       } else {
         context.logger.error('Error:', String(error));
       }
-      
+
       // Additional debugging info
       if (error.command) {
         context.logger.debug('Failed command:', error.command);
@@ -84,7 +80,7 @@ export const statusCommand: CommandDefinition = {
       if (error.exitCode) {
         context.logger.debug('Exit code:', error.exitCode);
       }
-      
+
       process.exit(1);
     }
   },
@@ -94,7 +90,7 @@ function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  
+
   if (days > 0) {
     return `${days}d ${hours}h`;
   } else if (hours > 0) {
@@ -104,7 +100,7 @@ function formatUptime(seconds: number): string {
   }
 }
 
-async function showDockerComposeStatus(context: CommandContext, options: any, spinner: Ora) {
+async function showDockerComposeStatus(context: CommandContext, options: any) {
   // Check if docker-compose.yml exists
   const composeFile = join(process.cwd(), 'docker-compose.yml');
   if (!existsSync(composeFile)) {
@@ -118,24 +114,25 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
   const config = configManager.getConfig();
   const projectName = config.projectName || 'supastorj';
 
-  spinner.start('Checking service status...');
-  
+  const s = spinner();
+  s.start('Checking service status...');
+
   // Load service adapters
   const adapters = await DockerAdapter.fromCompose(
     composeFile,
     projectName,
     context.logger
   );
-  
+
   // Collect service information
   const services: ServiceInfo[] = [];
-  
+
   for (const adapter of adapters) {
     try {
       const status = await adapter.getStatus();
       const health = await adapter.healthcheck();
       const info = await adapter.getInfo();
-      
+
       services.push({
         name: adapter.name,
         status: status === ServiceStatus.Running ? 'running' : status,
@@ -153,22 +150,22 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
       });
     }
   }
-  
-  spinner.stop();
-  
+
+  s.stop('Service status retrieved');
+
   if (options.json) {
     // Output as JSON
     console.log(JSON.stringify(services, null, 2));
   } else if (options.watch) {
     // Interactive watch mode using Ink
     // React is already imported at the top of the file
-    
+
     const StatusTable: React.FC<{ adapters: DockerAdapter[], onExit?: () => void }> = ({ adapters: adapterList, onExit }) => {
       const { exit } = useApp();
       const { setRawMode } = useStdin();
       const [serviceList, setServiceList] = React.useState<ServiceInfo[]>([]);
       const [lastUpdate, setLastUpdate] = React.useState(new Date());
-      
+
       // Enable raw mode for keyboard input
       React.useEffect(() => {
         setRawMode(true);
@@ -176,7 +173,7 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           setRawMode(false);
         };
       });
-      
+
       // Handle keyboard input
       useInput((input, key) => {
         if ((key.ctrl && input === 'c') || input === 'q' || input === 'Q') {
@@ -184,17 +181,17 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           exit();
         }
       });
-      
+
       // Function to fetch service status
       const fetchServices = async () => {
         const updatedServices: ServiceInfo[] = [];
-        
+
         for (const adapter of adapterList) {
           try {
             const status = await adapter.getStatus();
             const health = await adapter.healthcheck();
             const info = await adapter.getInfo();
-            
+
             updatedServices.push({
               name: adapter.name,
               status: status === ServiceStatus.Running ? 'running' : status,
@@ -212,20 +209,20 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
             });
           }
         }
-        
+
         setServiceList(updatedServices);
         setLastUpdate(new Date());
       };
-      
+
       // Initial fetch and interval setup
       React.useEffect(() => {
         fetchServices();
-        
+
         const interval = setInterval(fetchServices, 2000);
-        
+
         return () => clearInterval(interval);
       }, []);
-      
+
       return React.createElement(
         Box,
         { flexDirection: 'column' },
@@ -238,7 +235,7 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           React.createElement(Text, { bold: true }, 'Ports'.padEnd(20)),
           React.createElement(Text, { bold: true }, 'Uptime')
         ),
-        ...serviceList.map(s => 
+        ...serviceList.map(s =>
           React.createElement(
             Box,
             { key: s.name },
@@ -250,13 +247,13 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
           )
         ),
         React.createElement(Box, { marginTop: 1 },
-          React.createElement(Text, { dimColor: true }, 
+          React.createElement(Text, { dimColor: true },
             `Press CTRL+C or Q to exit • Last update: ${lastUpdate.toLocaleTimeString()}`
           )
         )
       );
     };
-    
+
     // Setup clean exit handler
     const exitHandler = () => {
       // Restore terminal
@@ -264,21 +261,21 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
       process.stdout.write('\n'); // Add newline for cleaner exit
       process.exit(0);
     };
-    
+
     // Handle process exit
     process.on('exit', () => {
       // Ensure terminal is restored on exit
       process.stdout.write('\u001B[?25h'); // Show cursor
     });
-    
+
     // Render the app with adapters
-    const app = render(React.createElement(StatusTable, { 
+    const app = render(React.createElement(StatusTable, {
       adapters,
       onExit: exitHandler
     }), {
       exitOnCtrlC: true  // Let Ink handle Ctrl+C properly
     });
-    
+
     // Wait for app to unmount properly
     app.waitUntilExit().then(() => {
       exitHandler();
@@ -297,11 +294,11 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
       chalk.bold('Uptime')
     );
     console.log(chalk.gray('─'.repeat(80)));
-    
+
     for (const service of services) {
       const statusColor = service.status === 'running' ? chalk.green : chalk.red;
       const healthColor = service.health === 'healthy' ? chalk.green : chalk.yellow;
-      
+
       console.log(
         chalk.cyan(service.name.padEnd(20)) +
         statusColor(service.status.padEnd(12)) +
@@ -310,12 +307,12 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
         service.uptime
       );
     }
-    
+
     console.log(chalk.gray('─'.repeat(80)));
-    
+
     const runningCount = services.filter(s => s.status === 'running').length;
     const healthyCount = services.filter(s => s.health === 'healthy').length;
-    
+
     console.log('\n' + chalk.gray(
       `${runningCount}/${services.length} services running, ` +
       `${healthyCount}/${services.length} healthy`
@@ -323,15 +320,16 @@ async function showDockerComposeStatus(context: CommandContext, options: any, sp
   }
 }
 
-async function showProductionStatus(context: CommandContext, options: any, spinner: Ora) {
-  spinner.start('Checking production service status...');
-  
+async function showProductionStatus(context: CommandContext, options: any) {
+  const s = spinner();
+  s.start('Checking production service status...');
+
   try {
     // Check if storage process is running
     const pidPath = join(process.cwd(), 'logs/storage-api.pid');
-    
+
     if (!existsSync(pidPath)) {
-      spinner.stop();
+      s.stop('Service check complete');
       console.log('\n' + chalk.bold('Service Status:'));
       console.log(chalk.gray('─'.repeat(80)));
       console.log(chalk.cyan('storage-api'.padEnd(20)) + chalk.red('stopped'.padEnd(12)));
@@ -339,19 +337,19 @@ async function showProductionStatus(context: CommandContext, options: any, spinn
       console.log('\n' + chalk.gray('Service is not running. Start with: supastorj start'));
       return;
     }
-    
+
     const pid = await readFile(pidPath, 'utf-8');
     const pidNum = parseInt(pid.trim());
-    
+
     // Check if process is running
     try {
       process.kill(pidNum, 0);
       // Process exists
-      
+
       // Try to get more info from the API
       const envPath = join(process.cwd(), '.env');
       let port = '5000';
-      
+
       if (existsSync(envPath)) {
         const envContent = await readFile(envPath, 'utf-8');
         const match = envContent.match(/SERVER_PORT=(\d+)/);
@@ -359,9 +357,9 @@ async function showProductionStatus(context: CommandContext, options: any, spinn
           port = match[1] || '5000';
         }
       }
-      
-      spinner.stop();
-      
+
+      s.stop('Service is running');
+
       if (options.json) {
         console.log(JSON.stringify([{
           name: 'storage-api',
@@ -391,19 +389,19 @@ async function showProductionStatus(context: CommandContext, options: any, spinn
       }
     } catch (error) {
       // Process doesn't exist
-      spinner.stop();
+      s.stop('Service is not running');
       console.log('\n' + chalk.bold('Service Status:'));
       console.log(chalk.gray('─'.repeat(80)));
       console.log(chalk.cyan('storage-api'.padEnd(20)) + chalk.red('stopped'.padEnd(12)) + chalk.gray('(stale PID file)'));
       console.log(chalk.gray('─'.repeat(80)));
       console.log('\n' + chalk.gray('Service is not running. Start with: supastorj start'));
-      
+
       // Clean up stale PID file
       $.verbose = false;
       await $`rm -f ${pidPath}`;
     }
   } catch (error: any) {
-    spinner.fail('Failed to check production status');
+    s.stop('Failed to check production status');
     context.logger.error('Error:', error.message);
   }
 }

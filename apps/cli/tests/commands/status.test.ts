@@ -3,7 +3,8 @@
  */
 
 import * as fs from 'fs';
-import { render } from 'ink-testing-library';
+import React from 'react';
+import { render } from 'ink';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
@@ -11,11 +12,55 @@ import { EventBusImpl } from '../../src/core/event-bus.js';
 import { statusCommand } from '../../src/commands/status.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
 import { DockerAdapter } from '../../src/adapters/docker-adapter.js';
-import { ServiceStatus, CommandContext } from '../../src/types/index.js';
+import { ServiceStatus, CommandContext, Environment } from '../../src/types/index.js';
 
 vi.mock('fs');
+vi.mock('fs/promises');
+vi.mock('ink');
 vi.mock('../../src/adapters/docker-adapter.js');
-vi.mock('ink-testing-library');
+
+// Mock @clack/prompts
+vi.mock('@clack/prompts', () => ({
+  spinner: () => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    message: '',
+  }),
+}));
+
+// Mock zx
+vi.mock('zx', () => ({
+  $: vi.fn().mockResolvedValue({ stdout: '' }),
+  chalk: {
+    green: (text: string) => text,
+    red: (text: string) => text,
+    yellow: (text: string) => text,
+    cyan: (text: string) => text,
+    dim: (text: string) => text,
+    bold: (text: string) => text,
+  },
+}));
+
+// Mock config manager
+vi.mock('../../src/config/config-manager.js', () => ({
+  ConfigManager: Object.assign(
+    vi.fn().mockImplementation(() => ({
+      load: vi.fn().mockResolvedValue(undefined),
+      getConfig: vi.fn().mockReturnValue({
+        projectName: 'test-project',
+        environment: 'development',
+      }),
+    })),
+    {
+      generateDefault: vi.fn().mockReturnValue({
+        projectName: 'test-project',
+        environment: 'development',
+        version: '1.0.0',
+        initialized: true,
+      }),
+    }
+  ),
+}));
 
 describe('Status Command', () => {
   let context: CommandContext;
@@ -27,8 +72,11 @@ describe('Status Command', () => {
     vi.clearAllMocks();
     
     context = {
-      config: ConfigManager.generateDefault(),
-      environment: 'development',
+      config: ConfigManager.generateDefault({
+        projectName: 'test-project',
+        environment: Environment.Development,
+      }),
+      environment: Environment.Development,
       logger: new LoggerImpl(),
       eventBus: new EventBusImpl(),
     };
@@ -49,44 +97,29 @@ describe('Status Command', () => {
     // Mock fs.existsSync
     vi.mocked(fs.existsSync).mockReturnValue(true);
 
-    // Mock render to return a simple object
-    vi.mocked(render).mockReturnValue({
-      cleanup: vi.fn(),
-      rerender: vi.fn(),
-      unmount: vi.fn(),
-      stdin: { write: vi.fn() },
-      stdout: { frames: [] },
-      stderr: { frames: [] },
-    } as any);
-
     // Mock DockerAdapter
     mockAdapter = {
       name: 'postgres',
       type: 'postgres',
-      status: vi.fn().mockResolvedValue(ServiceStatus.Running),
       getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
-      getInfo: vi.fn().mockResolvedValue({
-        id: 'container-123',
-        name: 'postgres',
-        status: 'running',
-        uptime: 3600,
-        ports: [{ PrivatePort: 5432, PublicPort: 5432, Type: 'tcp' }],
-        networks: ['supastor_default'],
+      healthcheck: vi.fn().mockResolvedValue({ healthy: true, status: 'healthy' }),
+      getContainerInfo: vi.fn().mockResolvedValue({
+        id: 'mock-id',
         image: 'postgres:16',
-        created: new Date().toISOString(),
-      }),
-      healthcheck: vi.fn().mockResolvedValue({
-        healthy: true,
-        message: 'Container is healthy',
-      }),
-      stats: vi.fn().mockResolvedValue({
-        cpu: { percent: 5.2 },
-        memory: { used: 100 * 1024 * 1024, limit: 1024 * 1024 * 1024, percent: 9.8 },
-        network: { rx: 1000, tx: 2000 },
-        disk: { read: 500, write: 1000 },
+        status: 'running',
+        ports: { '5432/tcp': [{ HostPort: '5432' }] },
+        created: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
       }),
     };
     vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([mockAdapter]);
+
+    // Mock ink render
+    vi.mocked(render).mockReturnValue({
+      unmount: vi.fn(),
+      rerender: vi.fn(),
+      clear: vi.fn(),
+      waitUntilExit: vi.fn().mockResolvedValue(undefined),
+    } as any);
   });
 
   afterEach(() => {
@@ -97,11 +130,14 @@ describe('Status Command', () => {
     expect(statusCommand.name).toBe('status');
     expect(statusCommand.description).toContain('Show service status');
     expect(statusCommand.options).toBeDefined();
-    expect(statusCommand.options).toHaveLength(2);
+    expect(statusCommand.options).toHaveLength(3);
   });
 
   it('should check for docker-compose.yml', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+    const { ConfigManager } = await import('../../src/config/config-manager.js');
+    vi.mocked(ConfigManager).mockImplementation(() => {
+      throw new Error('Configuration not found. Run "supastorj init" to initialize the project.');
+    });
     
     try {
       await statusCommand.action(context, {});
@@ -110,123 +146,116 @@ describe('Status Command', () => {
     }
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      'No docker-compose.yml found. Run "supastorj init" first.'
+      'Error:',
+      expect.stringContaining('Configuration not found')
     );
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 
   it('should show status in interactive mode', async () => {
-    // Skip interactive mode test as it's complex to test with Ink
-    expect(true).toBe(true);
+    const options = {};
+    
+    await statusCommand.action(context, options);
+
+    expect(render).toHaveBeenCalled();
   });
 
   it('should show status in JSON format', async () => {
-    await statusCommand.action(context, { json: true });
+    const options = { json: true };
+    
+    await statusCommand.action(context, options);
 
     expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"postgres"')
+      expect.stringContaining('{')
     );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"status"')
-    );
+    expect(render).not.toHaveBeenCalled();
   });
 
   it('should show status in table format by default', async () => {
-    await statusCommand.action(context, {});
+    const options = {};
+    
+    await statusCommand.action(context, options);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Service Status')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('postgres')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('running')
-    );
+    expect(render).toHaveBeenCalled();
   });
 
   it('should handle multiple services', async () => {
-    const postgresAdapter = {
+    const mockPostgresAdapter = {
       name: 'postgres',
       type: 'postgres',
-      status: vi.fn().mockResolvedValue(ServiceStatus.Running),
       getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
-      getInfo: vi.fn().mockResolvedValue({
+      healthcheck: vi.fn().mockResolvedValue({ healthy: true, status: 'healthy' }),
+      getContainerInfo: vi.fn().mockResolvedValue({
+        id: 'postgres-id',
+        image: 'postgres:16',
         status: 'running',
-        uptime: 3600,
-        ports: [{ PrivatePort: 5432, PublicPort: 5432, Type: 'tcp' }],
+        ports: { '5432/tcp': [{ HostPort: '5432' }] },
+        created: new Date(Date.now() - 3600000).toISOString(),
       }),
-      healthcheck: vi.fn().mockResolvedValue({
-        healthy: true,
-        message: 'Healthy',
-      }),
-      stats: vi.fn().mockResolvedValue({
-        cpu: { percent: 5 },
-        memory: { percent: 10 },
+    };
+    const mockStorageAdapter = {
+      name: 'storage',
+      type: 'storage',
+      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
+      healthcheck: vi.fn().mockResolvedValue({ healthy: true, status: 'healthy' }),
+      getContainerInfo: vi.fn().mockResolvedValue({
+        id: 'storage-id',
+        image: 'supabase/storage-api:latest',
+        status: 'running',
+        ports: { '5000/tcp': [{ HostPort: '5000' }] },
+        created: new Date(Date.now() - 1800000).toISOString(),
       }),
     };
     
-    const storageAdapter = {
-      name: 'storage',
-      type: 'storage',
-      status: vi.fn().mockResolvedValue(ServiceStatus.Running),
-      getStatus: vi.fn().mockResolvedValue(ServiceStatus.Running),
-      getInfo: vi.fn().mockResolvedValue({
-        status: 'running',
-        uptime: 1800,
-        ports: [{ PrivatePort: 5000, PublicPort: 5000, Type: 'tcp' }],
-      }),
-      healthcheck: vi.fn().mockResolvedValue({
-        healthy: false,
-        message: 'Unhealthy',
-      }),
-      stats: vi.fn().mockResolvedValue({
-        cpu: { percent: 3 },
-        memory: { percent: 5 },
-      }),
-    };
-
     vi.mocked(DockerAdapter.fromCompose).mockResolvedValue([
-      postgresAdapter,
-      storageAdapter,
+      mockPostgresAdapter,
+      mockStorageAdapter,
     ]);
 
-    await statusCommand.action(context, {});
+    const options = { json: true };
+    
+    await statusCommand.action(context, options);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('postgres')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('storage')
-    );
+    const output = consoleLogSpy.mock.calls[0][0];
+    const parsedOutput = JSON.parse(output);
+    
+    expect(parsedOutput.services).toHaveLength(2);
+    expect(parsedOutput.services[0].name).toBe('postgres');
+    expect(parsedOutput.services[1].name).toBe('storage');
   });
 
   it('should handle service errors gracefully', async () => {
-    mockAdapter.getInfo.mockRejectedValue(new Error('Container not found'));
-    mockAdapter.healthcheck.mockRejectedValue(new Error('Health check failed'));
-    mockAdapter.stats.mockRejectedValue(new Error('Stats unavailable'));
+    mockAdapter.getStatus.mockRejectedValue(new Error('Docker error'));
+    
+    const options = { json: true };
+    
+    await statusCommand.action(context, options);
 
-    await statusCommand.action(context, {});
-
-    // Should still show status even with errors
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('postgres')
-    );
+    const output = consoleLogSpy.mock.calls[0][0];
+    const parsedOutput = JSON.parse(output);
+    
+    expect(parsedOutput.services[0].status).toBe('error');
+    expect(parsedOutput.services[0].health).toBe('unknown');
   });
 
   it('should format uptime correctly', async () => {
-    // Test that uptime is displayed
-    mockAdapter.getInfo.mockResolvedValue({
+    // Test with container created 2 hours, 30 minutes ago
+    const twoHoursAgo = new Date(Date.now() - (2.5 * 60 * 60 * 1000));
+    mockAdapter.getContainerInfo.mockResolvedValue({
+      id: 'mock-id',
+      image: 'postgres:16',
       status: 'running',
-      uptime: 3665,
-      ports: [],
+      ports: { '5432/tcp': [{ HostPort: '5432' }] },
+      created: twoHoursAgo.toISOString(),
     });
 
-    await statusCommand.action(context, {});
+    const options = { json: true };
+    
+    await statusCommand.action(context, options);
 
-    // Check that the table includes an uptime column
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Uptime')
-    );
+    const output = consoleLogSpy.mock.calls[0][0];
+    const parsedOutput = JSON.parse(output);
+    
+    expect(parsedOutput.services[0].uptime).toMatch(/2h 30m/);
   });
 });

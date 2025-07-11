@@ -2,12 +2,11 @@
  * Logger implementation with audit logging support using Pino
  */
 
-import pino from 'pino';
-import { multistream, Level } from 'pino';
-import pinoPretty from 'pino-pretty';
-import { existsSync, mkdirSync } from 'fs';
+import { chalk } from 'zx';
 import { dirname } from 'path';
-import chalk from 'chalk';
+import pinoPretty from 'pino-pretty';
+import pino, { multistream } from 'pino';
+import { mkdirSync, existsSync } from 'fs';
 
 import { Logger } from '../types/index.js';
 
@@ -41,7 +40,7 @@ export class LoggerImpl implements Logger {
         level: (inputData: string | object) => {
           const levelNum = typeof inputData === 'object' ? (inputData as any).level : parseInt(inputData);
           let levelLabel = '';
-          
+
           if (levelNum === 10) levelLabel = 'TRACE';
           else if (levelNum === 20) levelLabel = 'DEBUG';
           else if (levelNum === 30) levelLabel = 'INFO';
@@ -87,9 +86,7 @@ export class LoggerImpl implements Logger {
       level,
       base: null, // Remove pid and hostname from logs
       formatters: {
-        level: (label: string, number: number) => {
-          return { level: number };
-        }
+        level: (label: string, number: number) => ({ level: number })
       }
     }, multistream(streams));
 
@@ -99,7 +96,7 @@ export class LoggerImpl implements Logger {
         level: 'info',
         transport: {
           target: 'pino/file',
-          options: { 
+          options: {
             destination: auditLogPath,
             mkdir: true
           }
@@ -138,10 +135,10 @@ export class LoggerImpl implements Logger {
       if (typeof meta === 'string') {
         this.logger.error(`${message} ${meta}`);
       } else if (meta instanceof Error) {
-        this.logger.error({ 
+        this.logger.error({
           err: meta,
           stack: meta.stack,
-          message: meta.message 
+          message: meta.message
         }, message);
       } else {
         this.logger.error(meta, message);
@@ -173,7 +170,7 @@ export class LoggerImpl implements Logger {
    */
   child(childMeta: any): Logger {
     const childPino = this.logger.child(childMeta);
-    
+
     return {
       debug: (message: string, meta?: any) => {
         if (meta !== undefined) {

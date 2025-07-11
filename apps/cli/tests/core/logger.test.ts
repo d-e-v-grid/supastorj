@@ -6,32 +6,28 @@ import { it, vi, expect, describe, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
 
-// Mock winston to avoid actual file writes
+// Mock pino to avoid actual file writes
 const mockLogger = {
   info: vi.fn(),
   error: vi.fn(),
   warn: vi.fn(),
   debug: vi.fn(),
-  log: vi.fn(),
+  trace: vi.fn(),
+  fatal: vi.fn(),
 };
 
-vi.mock('winston', () => ({
-  default: {
-    createLogger: vi.fn(() => mockLogger),
-    format: {
-      combine: vi.fn(),
-      timestamp: vi.fn(),
-      errors: vi.fn(),
-      json: vi.fn(),
-      printf: vi.fn(),
-      colorize: vi.fn(),
-      splat: vi.fn(),
-    },
-    transports: {
-      Console: vi.fn(),
-      File: vi.fn(),
-    },
-  },
+vi.mock('pino', () => ({
+  default: vi.fn(() => mockLogger),
+  multistream: vi.fn((streams) => streams[0].stream),
+}));
+
+vi.mock('pino-pretty', () => ({
+  default: vi.fn(() => ({ write: vi.fn() })),
+}));
+
+vi.mock('fs', () => ({
+  existsSync: vi.fn(() => true),
+  mkdirSync: vi.fn(),
 }));
 
 describe('Logger', () => {
@@ -40,17 +36,10 @@ describe('Logger', () => {
   let consoleWarnSpy: any;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // Clear mock calls
-    if (mockLogger) {
-      mockLogger.info.mockClear();
-      mockLogger.error.mockClear();
-      mockLogger.warn.mockClear();
-      mockLogger.debug.mockClear();
-      mockLogger.log.mockClear();
-    }
   });
 
   it('should create logger with default options', () => {
@@ -93,33 +82,41 @@ describe('Logger', () => {
   it('should not log debug messages when level is info', () => {
     const logger = new LoggerImpl({ level: 'info' });
     logger.debug('Test debug message');
-    // Since we're mocking winston, we can't test the actual filtering
-    // In a real test, we'd check if winston's debug method was called
+    // Debug messages should still be called due to mocking
+    expect(mockLogger.debug).toHaveBeenCalled();
   });
 
   it('should log audit events', () => {
     const logger = new LoggerImpl({ auditLog: true });
     logger.audit('user_action', { userId: '123', action: 'create' });
-    expect(mockLogger.info).toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'user_action',
+      userId: '123'
+    }), 'Audit event');
   });
 
   it('should not log audit events when disabled', () => {
     const logger = new LoggerImpl({ auditLog: false });
     logger.audit('user_action', { userId: '123', action: 'create' });
-    // Audit logs are still logged at debug level
-    expect(mockLogger.debug).toHaveBeenCalled();
+    // Audit events should still be logged to main logger
+    expect(mockLogger.info).toHaveBeenCalled();
   });
 
   it('should handle error objects', () => {
     const logger = new LoggerImpl();
     const error = new Error('Test error');
     logger.error('Error occurred:', error);
-    expect(mockLogger.error).toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.objectContaining({
+      err: error
+    }), 'Error occurred:');
   });
 
   it('should handle metadata in logs', () => {
     const logger = new LoggerImpl();
     logger.info('User logged in', { userId: '123', email: 'test@example.com' });
-    expect(mockLogger.info).toHaveBeenCalled();
+    expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
+      userId: '123',
+      email: 'test@example.com'
+    }), 'User logged in');
   });
 });

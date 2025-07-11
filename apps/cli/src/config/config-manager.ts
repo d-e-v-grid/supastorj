@@ -3,18 +3,17 @@
  */
 
 import { z } from 'zod';
+import { join } from 'path';
+import { dotenv } from 'zx';
 import { constants } from 'fs';
-import { config as dotenvConfig } from 'dotenv';
-import { access, readFile, writeFile, mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
+import { mkdir, access, readFile, writeFile } from 'fs/promises';
 
-import { 
-  SupastorjConfig, 
-  Environment, 
-  SupastorjConfigSchema,
+import {
+  Environment,
+  DeploymentMode,
+  SupastorjConfig,
   StorageBackendType,
-  DeploymentMode 
+  SupastorjConfigSchema
 } from '../types/index.js';
 
 export interface ConfigManagerOptions {
@@ -73,20 +72,20 @@ export class ConfigManager {
    */
   async save(config: SupastorjConfig): Promise<void> {
     const validatedConfig = SupastorjConfigSchema.parse(config);
-    
+
     // Ensure config directory exists
     await this.ensureConfigDir();
-    
+
     // Add/update timestamps
     validatedConfig.updatedAt = new Date().toISOString();
     if (!validatedConfig.createdAt) {
       validatedConfig.createdAt = validatedConfig.updatedAt;
     }
-    
+
     // Save as formatted JSON
     const jsonContent = JSON.stringify(validatedConfig, null, 2);
     await writeFile(this.configPath, jsonContent, 'utf-8');
-    
+
     this.config = validatedConfig;
   }
 
@@ -107,7 +106,7 @@ export class ConfigManager {
     try {
       const configExists = await this.fileExists(this.configPath);
       if (!configExists) return false;
-      
+
       const config = await this.load();
       return config.initialized === true;
     } catch {
@@ -167,7 +166,7 @@ export class ConfigManager {
   } = {}): SupastorjConfig {
     const now = new Date().toISOString();
     const storageBackend = options.storageBackend || StorageBackendType.File;
-    
+
     return {
       version: '1.0.0',
       projectName: options.projectName || 'supastorj',
@@ -259,18 +258,16 @@ export class ConfigManager {
   private async loadEnvVars(): Promise<void> {
     // Load from .env file
     const envExists = await this.fileExists(this.envPath);
+    let envVars: Record<string, any> = {};
     if (envExists) {
-      const result = dotenvConfig({ path: this.envPath });
-      if (result.parsed) {
-        this.envVars = { ...this.envVars, ...result.parsed };
-      }
+      envVars = await dotenv.load(this.envPath);
     }
 
-    // Merge with process.env (filter out undefined values)
-    const processEnvVars = Object.entries(process.env)
+    // Store all environment variables (filter out undefined values)
+    const processEnvVars = Object.entries(envVars)
       .filter(([, value]) => value !== undefined)
       .reduce((acc, [key, value]) => ({ ...acc, [key]: value! }), {});
-    this.envVars = { ...this.envVars, ...processEnvVars };
+    this.envVars = processEnvVars;
   }
 
   /**

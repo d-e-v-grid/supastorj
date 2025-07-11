@@ -2,7 +2,7 @@
  * Logs command - View service logs
  */
 
-import chalk from 'chalk';
+import { chalk } from 'zx';
 import { join } from 'path';
 import { existsSync } from 'fs';
 
@@ -76,7 +76,7 @@ export const logsCommand: CommandDefinition = {
         follow: options.follow,
         tail: parseInt(options.tail) || 100,
       };
-      
+
       // Track active streams for cleanup
       const abortControllers: AbortController[] = [];
       let isShuttingDown = false;
@@ -85,14 +85,14 @@ export const logsCommand: CommandDefinition = {
       const cleanup = () => {
         if (isShuttingDown) return;
         isShuttingDown = true;
-        
+
         console.log('\n' + chalk.yellow('Stopping log stream...'));
-        
+
         // Abort all active streams
         for (const controller of abortControllers) {
           controller.abort();
         }
-        
+
         // Small delay to allow streams to clean up
         setTimeout(() => {
           process.exit(0);
@@ -108,11 +108,11 @@ export const logsCommand: CommandDefinition = {
         context.logger.debug('SIGTERM received');
         cleanup();
       });
-      
+
       // Set raw mode to properly handle Ctrl+C if we're in a TTY
       if (process.stdin.isTTY && options.follow) {
         process.stdin.setRawMode(true);
-        
+
         // Handle keyboard input for Ctrl+C
         process.stdin.on('data', (data) => {
           // Ctrl+C is \x03
@@ -122,11 +122,11 @@ export const logsCommand: CommandDefinition = {
           }
         });
       }
-      
+
       // For debugging - check if handlers are registered
       context.logger.debug(`SIGINT listeners: ${process.listenerCount('SIGINT')}`);
       context.logger.debug(`Process is TTY: ${process.stdin.isTTY}`);
-      
+
       // Also handle process termination
       process.once('exit', () => {
         if (!isShuttingDown) {
@@ -138,29 +138,29 @@ export const logsCommand: CommandDefinition = {
       const streams = selectedAdapters.map(async (adapter) => {
         const abortController = new AbortController();
         abortControllers.push(abortController);
-        
+
         try {
           const serviceLabel = chalk.cyan(`[${adapter.name}]`);
-          
+
           // Pass abort signal to adapter
           const extendedOptions = {
             ...logOptions,
             signal: abortController.signal
           };
-          
+
           for await (const line of adapter.logs(extendedOptions)) {
             if (abortController.signal.aborted || isShuttingDown) break;
             console.log(`${serviceLabel} ${line}`);
           }
         } catch (error: any) {
           // Ignore abort errors and shutdown errors
-          if (error.name === 'AbortError' || 
-              error.code === 'ECONNRESET' || 
-              error.message?.includes('aborted') ||
-              isShuttingDown) {
+          if (error.name === 'AbortError' ||
+            error.code === 'ECONNRESET' ||
+            error.message?.includes('aborted') ||
+            isShuttingDown) {
             return;
           }
-          
+
           // Only log other errors if not shutting down
           if (!isShuttingDown) {
             context.logger.error(`Error streaming logs for ${adapter.name}:`, error.message);
@@ -181,7 +181,7 @@ export const logsCommand: CommandDefinition = {
         process.removeListener('SIGINT', cleanup);
         process.removeListener('SIGTERM', cleanup);
         process.removeAllListeners('exit');
-        
+
         // Restore stdin mode and remove data listener
         if (process.stdin.isTTY && options.follow) {
           process.stdin.setRawMode(false);

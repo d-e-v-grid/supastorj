@@ -2,68 +2,31 @@
  * Stop command tests
  */
 
-import * as fs from 'fs';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
-import { LoggerImpl } from '../../src/core/logger.js';
 import { stopCommand } from '../../src/commands/stop.js';
-import { CommandContext } from '../../src/types/index.js';
-import { EventBusImpl } from '../../src/core/event-bus.js';
-import { ConfigManager } from '../../src/config/config-manager.js';
+import { CommandContext, Environment } from '../../src/types/index.js';
+import { setupZxMocks, setupFsMocks, createTestContext, mockProcessExit, mockConfigManager } from '../test-utils.js';
 
-vi.mock('fs');
-const mockSpinner = {
-  start: vi.fn().mockReturnThis(),
-  stop: vi.fn(),
-  succeed: vi.fn(),
-  fail: vi.fn(),
-  warn: vi.fn(),
-  text: '',
-};
+// Setup common mocks
+setupZxMocks();
+setupFsMocks();
 
-vi.mock('ora', () => ({
-  default: vi.fn(() => mockSpinner),
-}));
-
-// Mock execa
-vi.mock('execa', () => ({
-  execa: vi.fn().mockResolvedValue({
-    stdout: '',
-    stderr: '',
-    exitCode: 0,
-  }),
-}));
-
-describe('Down Command', () => {
+describe('Stop Command', () => {
   let context: CommandContext;
   let mockExit: any;
-  let consoleLogSpy: any;
+  let configManagerMock: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
     
-    context = {
-      config: ConfigManager.generateDefault(),
-      environment: 'development',
-      logger: new LoggerImpl(),
-      eventBus: new EventBusImpl(),
-    };
-
-    // Mock logger
-    vi.spyOn(context.logger, 'info').mockImplementation(() => {});
-    vi.spyOn(context.logger, 'error').mockImplementation(() => {});
-    vi.spyOn(context.logger, 'warn').mockImplementation(() => {});
-
-    // Mock process.exit
-    mockExit = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit');
+    context = createTestContext({
+      projectName: 'test-project',
+      environment: Environment.Development,
     });
 
-    // Mock console
-    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
-    // Mock fs.existsSync
-    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockExit = mockProcessExit();
+    configManagerMock = mockConfigManager();
   });
 
   afterEach(() => {
@@ -71,14 +34,14 @@ describe('Down Command', () => {
   });
 
   it('should have correct command definition', () => {
-    expect(stopCommand.name).toBe('down');
-    expect(stopCommand.description).toContain('Stop all services');
+    expect(stopCommand.name).toBe('stop');
+    expect(stopCommand.description).toContain('Stop Supastorj services');
     expect(stopCommand.options).toBeDefined();
     expect(stopCommand.options).toHaveLength(3);
   });
 
-  it('should check for docker-compose.yml', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+  it('should check if project is initialized', async () => {
+    configManagerMock.isInitialized.mockResolvedValue(false);
     
     try {
       await stopCommand.action(context, {});
@@ -87,100 +50,14 @@ describe('Down Command', () => {
     }
 
     expect(context.logger.error).toHaveBeenCalledWith(
-      'No docker-compose.yml found. Run "supastorj init" first.'
+      'Project not initialized. Run "supastorj init" first.'
     );
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 
-  it('should stop services with default options', async () => {
-    const options = { volumes: false, removeOrphans: false };
-    const { execa } = await import('execa');
-    
-    await stopCommand.action(context, options);
-
-    expect(execa).toHaveBeenCalledWith(
-      'docker-compose',
-      expect.arrayContaining([
-        '-f', expect.stringContaining('docker-compose.yml'),
-        '-p', 'supastorj',
-        'down'
-      ]),
-      { stdio: 'pipe' }
-    );
-  });
-
-  it('should remove volumes with --volumes option', async () => {
-    const options = { volumes: true };
-    const { execa } = await import('execa');
-    
-    await stopCommand.action(context, options);
-
-    expect(execa).toHaveBeenCalledWith(
-      'docker-compose',
-      expect.arrayContaining(['-v']),
-      expect.any(Object)
-    );
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Volumes have been removed')
-    );
-  });
-
-  it('should remove orphans with --remove-orphans option', async () => {
-    const options = { removeOrphans: true };
-    const { execa } = await import('execa');
-    
-    await stopCommand.action(context, options);
-
-    expect(execa).toHaveBeenCalledWith(
-      'docker-compose',
-      expect.arrayContaining(['--remove-orphans']),
-      expect.any(Object)
-    );
-  });
-
-  it('should remove images with --rmi option', async () => {
-    const options = { rmi: 'all' };
-    const { execa } = await import('execa');
-    
-    await stopCommand.action(context, options);
-
-    expect(execa).toHaveBeenCalledWith(
-      'docker-compose',
-      expect.arrayContaining(['--rmi', 'all']),
-      expect.any(Object)
-    );
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Images have been removed (all)')
-    );
-  });
-
-  it('should handle multiple options together', async () => {
-    const options = {
-      volumes: true,
-      removeOrphans: true,
-      rmi: 'local',
-    };
-    const { execa } = await import('execa');
-    
-    await stopCommand.action(context, options);
-
-    expect(execa).toHaveBeenCalledWith(
-      'docker-compose',
-      expect.arrayContaining([
-        '-v',
-        '--remove-orphans',
-        '--rmi', 'local'
-      ]),
-      expect.any(Object)
-    );
-  });
-
-  it('should handle docker-compose errors', async () => {
+  it('should stop services in development mode', async () => {
     const options = {};
-    const { execa } = await import('execa');
-    vi.mocked(execa).mockRejectedValue(new Error('Docker not found'));
+    const { $ } = await import('zx');
     
     try {
       await stopCommand.action(context, options);
@@ -188,48 +65,134 @@ describe('Down Command', () => {
       expect(error.message).toBe('process.exit');
     }
 
-    expect(context.logger.error).toHaveBeenCalledWith(
-      'Error:',
-      'Docker not found'
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Stopping Supastorj in development mode')
     );
-    expect(mockExit).toHaveBeenCalledWith(1);
-  });
-
-  it('should show success message', async () => {
-    const options = {};
-    
-    await stopCommand.action(context, options);
-
-    expect(mockSpinner.succeed).toHaveBeenCalledWith(
-      'Services stopped successfully'
+    expect($).toHaveBeenCalledWith(
+      expect.arrayContaining(['docker', 'compose', '-f', 'docker-compose.yml', '-p', 'test-project', 'down'])
+    );
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Services stopped successfully')
     );
   });
 
-  it('should show failure message on error', async () => {
-    const options = {};
-    const { execa } = await import('execa');
-    
-    vi.mocked(execa).mockRejectedValue(new Error('Failed'));
+  it('should handle --volumes option', async () => {
+    const options = { volumes: true };
+    const { $ } = await import('zx');
     
     try {
       await stopCommand.action(context, options);
     } catch (error: any) {
-      // Expected
+      expect(error.message).toBe('process.exit');
     }
 
-    expect(mockSpinner.fail).toHaveBeenCalledWith(
-      'Failed to stop services'
+    expect($).toHaveBeenCalledWith(
+      expect.arrayContaining(['docker', 'compose', '-f', 'docker-compose.yml', '-p', 'test-project', 'down', '-v'])
     );
   });
 
-  it('should use correct project name', async () => {
-    const options = {};
-    const { execa } = await import('execa');
+  it('should handle --dev option', async () => {
+    const options = { dev: true };
+    const { $ } = await import('zx');
     
-    await stopCommand.action(context, options);
+    try {
+      await stopCommand.action(context, options);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
 
-    const args = vi.mocked(execa).mock.calls[0][1];
-    const projectIndex = args.indexOf('-p');
-    expect(args[projectIndex + 1]).toBe('supastorj');
+    expect(context.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining('Stopping Supastorj in development mode')
+    );
+  });
+
+  it('should handle --prod option', async () => {
+    const options = { prod: true };
+    const { $ } = await import('zx');
+    const { fs } = await import('zx');
+    vi.mocked(fs.readFile).mockResolvedValue('USE_DOCKER=true\nSERVER_PORT=5000');
+    
+    try {
+      await stopCommand.action(context, options);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
+
+    expect(context.logger.info).toHaveBeenCalledWith(
+      'Stopping Supastorj services in production mode...'
+    );
+  });
+
+  it('should handle docker compose errors', async () => {
+    const options = {};
+    const { $ } = await import('zx');
+    vi.mocked($).mockRejectedValue(new Error('Docker not found'));
+    
+    try {
+      await stopCommand.action(context, options);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
+
+    expect(context.logger.error).toHaveBeenCalledWith('Failed to stop services');
+    expect(mockExit).toHaveBeenCalledWith(1);
+  });
+
+  it('should use docker-compose fallback', async () => {
+    const options = {};
+    const { $ } = await import('zx');
+    
+    // Mock $ to fail on 'docker compose' but succeed on 'docker-compose'
+    vi.mocked($).mockImplementation((strings: TemplateStringsArray) => {
+      const cmd = strings.join('');
+      if (cmd.includes('docker compose version')) {
+        return Promise.reject(new Error('not found'));
+      }
+      if (cmd.includes('docker-compose version')) {
+        return Promise.resolve({ stdout: 'docker-compose version 1.29.0' });
+      }
+      return Promise.resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      });
+    });
+    
+    try {
+      await stopCommand.action(context, options);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
+
+    expect($).toHaveBeenCalledWith(
+      expect.arrayContaining(['docker-compose', '-f', 'docker-compose.yml', '-p', 'test-project', 'down'])
+    );
+  });
+
+  it('should stop production services', async () => {
+    const options = { prod: true };
+    const { $ } = await import('zx');
+    const { fs } = await import('zx');
+    
+    // Mock for production mode with Docker
+    vi.mocked(fs.readFile).mockResolvedValue('USE_DOCKER=false\nSERVER_PORT=5000');
+    vi.mocked($).mockImplementation((strings: TemplateStringsArray) => {
+      const cmd = strings.join('');
+      if (cmd.includes('pgrep')) {
+        return Promise.resolve({ stdout: '12345' });
+      }
+      return Promise.resolve({ stdout: '', stderr: '', exitCode: 0 });
+    });
+    
+    try {
+      await stopCommand.action(context, options);
+    } catch (error: any) {
+      expect(error.message).toBe('process.exit');
+    }
+
+    // Should check for running processes
+    expect($).toHaveBeenCalledWith(
+      expect.arrayContaining(['pgrep -f "node.*storage.*server.js"'])
+    );
   });
 });

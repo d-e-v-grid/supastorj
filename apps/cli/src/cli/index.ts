@@ -1,8 +1,7 @@
 /**
  * Supastorj CLI - Main entry point
  */
-
-import chalk from 'chalk';
+import { chalk } from 'zx';
 import { Command } from 'commander';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
