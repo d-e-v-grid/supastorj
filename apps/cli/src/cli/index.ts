@@ -16,7 +16,6 @@ import { EventBusImpl } from '../core/event-bus.js';
 import { statusCommand } from '../commands/status.js';
 // Import commands
 import { initCommand } from '../commands/init/index.js';
-import { PluginManager } from '../core/plugin-manager.js';
 import { ConfigManager } from '../config/config-manager.js';
 import { Environment, CommandContext } from '../types/index.js';
 
@@ -107,15 +106,6 @@ class SupastorCLI {
       eventBus,
     };
 
-    // Initialize plugin manager
-    const pluginManager = new PluginManager(this.context);
-    await pluginManager.initialize();
-
-    // Add plugin commands
-    const pluginCommands = pluginManager.getCommands();
-    for (const command of pluginCommands) {
-      this.addCommand(command);
-    }
   }
 
   /**

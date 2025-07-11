@@ -4,6 +4,7 @@
 import { chalk } from 'zx';
 import { text, select } from '@clack/prompts';
 
+import { withPrompt } from '../../utils/prompt-wrapper.js';
 import { CommandContext, CommandDefinition } from '../../types/index.js';
 import { DevDeployOptions, deployDevEnvironment } from './dev-environment.js';
 import { ProdDeployOptions, deployProdEnvironment } from './prod-environment.js';
@@ -38,11 +39,6 @@ export const initCommand: CommandDefinition = {
       defaultValue: false,
     },
     {
-      flags: '--skip-deps',
-      description: 'Skip dependency installation (prod mode only)',
-      defaultValue: false,
-    },
-    {
       flags: '--services <services>',
       description: 'Comma-separated list of services to deploy (prod mode only)',
     },
@@ -60,22 +56,26 @@ export const initCommand: CommandDefinition = {
       // First, always ask for project name unless in yes mode
       let projectName = 'supastorj';
       if (!options.yes) {
-        projectName = await text({
-          message: 'Project name:',
-          placeholder: 'supastorj',
-          defaultValue: 'supastorj',
-        }) as string;
+        projectName = await withPrompt(context.logger, async () =>
+          await text({
+            message: 'Project name:',
+            placeholder: 'supastorj',
+            defaultValue: 'supastorj',
+          }) as string
+        );
       }
 
       // If mode is not explicitly set, ask the user
       if (!options.yes && !['dev', 'prod'].includes(mode)) {
-        mode = await select({
-          message: 'Select project mode:',
-          options: [
-            { value: 'dev', label: 'Development (Docker Compose)' },
-            { value: 'prod', label: 'Production (Bare Metal)' },
-          ],
-        }) as string;
+        mode = await withPrompt(context.logger, async () =>
+          await select({
+            message: 'Select project mode:',
+            options: [
+              { value: 'dev', label: 'Development (Docker Compose)' },
+              { value: 'prod', label: 'Production (Bare Metal)' },
+            ],
+          }) as string
+        );
       }
 
       // Validate mode
@@ -84,7 +84,7 @@ export const initCommand: CommandDefinition = {
         process.exit(1);
       }
 
-      console.log(chalk.cyan(`\n🚀 Initializing project in ${mode.toUpperCase()} mode\n`));
+      context.logger.info(`🚀 Initializing project in ${chalk.cyan(mode.toUpperCase())} mode`);
 
       if (mode === 'dev') {
         // Development mode - Docker Compose deployment
@@ -92,7 +92,7 @@ export const initCommand: CommandDefinition = {
           force: options.force,
           yes: options.yes,
           skipEnv: options.skipEnv,
-          noImageTransform: options.noImageTransform,
+          imageTransform: options.imageTransform,
           projectName,
         };
 
@@ -100,12 +100,12 @@ export const initCommand: CommandDefinition = {
       } else {
         // Production mode - Bare metal deployment
         const prodOptions: ProdDeployOptions = {
-          skipDeps: options.skipDeps,
           services: options.services,
           dryRun: options.dryRun,
           force: options.force,
           yes: options.yes,
           skipEnv: options.skipEnv,
+          imageTransform: options.imageTransform,
           projectName,
         };
 

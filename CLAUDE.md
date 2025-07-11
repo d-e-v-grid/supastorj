@@ -18,6 +18,7 @@ yarn dev
 - **Yarn 4.x** - Workspaces + Turborepo
 - **Commander.js** - CLI framework
 - **Ink** - React-based TUI
+- **Clack** - Interactive prompts
 - **Vitest** - Testing (80% coverage)
 - **Docker** - Container management
 - **Zod** - Schema validation
@@ -38,7 +39,7 @@ supastorj/
 │       │   ├── adapters/    # External services
 │       │   ├── types/       # TypeScript types
 │       │   └── utils/       # Utilities
-│       ├── templates/       # Docker templates
+│       ├── templates/       # Docker & systemd templates
 │       └── tests/          # Test files
 ├── packages/               # Shared packages
 ├── docs/                   # Architecture docs
@@ -120,10 +121,17 @@ context.logger.audit('action', { userId });
 
 ## Architecture
 
-- **Plugin System** - Extensible functionality
+- **Service Management** - Centralized lifecycle management
 - **Event-Driven** - Decoupled communication
 - **Adapter Pattern** - External services
 - **Command Pattern** - Modular CLI
+
+## Configuration
+
+- **Unified config**: `.supastorj/config.json` for all deployment modes
+- **Environment modes**: development, production (staging removed)
+- **Service details**: Production mode saves connection info in config
+- **Environment variables**: Managed via `.env` file
 
 ## Services
 
@@ -131,7 +139,7 @@ context.logger.audit('action', { userId });
 2. **PgBouncer** - Connection pooling
 3. **MinIO** - S3 storage
 4. **Supabase Storage** - Storage API
-5. **Postgres-meta** - Schema management
+5. **Postgres-meta** - Schema management (port 5001)
 6. **imgproxy** - Image transformation
 7. **Redis** - Caching (optional)
 
@@ -165,6 +173,21 @@ Check for unmocked dependencies
 ```bash
 yarn clean && yarn build
 ```
+
+## CLI Commands
+
+### Available Commands
+- `init` - Initialize new project (`--mode dev/prod`, `--image-transform`)
+- `start` - Start services (`--attach` for foreground mode)
+- `stop` - Stop services (`--volumes`, `--images` for cleanup)
+- `status` - Show service status (`--json`, `--watch`)
+- `logs` - View logs (`--follow`, `--service <name>`)
+
+### Production Mode
+- Runs Storage API and Postgres Meta as systemd services
+- Connects to existing PostgreSQL and S3 infrastructure
+- PID tracking in `.supastorj/` directory
+- Support for attached/detached modes
 
 ## Future Components
 

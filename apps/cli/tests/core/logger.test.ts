@@ -89,17 +89,19 @@ describe('Logger', () => {
   it('should log audit events', () => {
     const logger = new LoggerImpl({ auditLog: true });
     logger.audit('user_action', { userId: '123', action: 'create' });
-    expect(mockLogger.info).toHaveBeenCalledWith(expect.objectContaining({
-      action: 'user_action',
-      userId: '123'
-    }), 'Audit event');
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: '123'
+      }),
+      'AUDIT: user_action'
+    );
   });
 
   it('should not log audit events when disabled', () => {
     const logger = new LoggerImpl({ auditLog: false });
     logger.audit('user_action', { userId: '123', action: 'create' });
-    // Audit events should still be logged to main logger
-    expect(mockLogger.info).toHaveBeenCalled();
+    // Audit events should still be logged to main logger at debug level
+    expect(mockLogger.debug).toHaveBeenCalled();
   });
 
   it('should handle error objects', () => {

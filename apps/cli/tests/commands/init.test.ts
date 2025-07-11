@@ -7,9 +7,9 @@ import * as prompts from '@clack/prompts';
 import { it, vi, expect, describe, afterEach, beforeEach } from 'vitest';
 
 import { LoggerImpl } from '../../src/core/logger.js';
-import { initCommand } from '../../src/commands/init/index.js';
 import { CommandContext } from '../../src/types/index.js';
 import { EventBusImpl } from '../../src/core/event-bus.js';
+import { initCommand } from '../../src/commands/init/index.js';
 import { ConfigManager } from '../../src/config/config-manager.js';
 
 vi.mock('fs/promises');
@@ -97,7 +97,7 @@ describe('Init Command', () => {
   it('should have correct command definition', () => {
     expect(initCommand.name).toBe('init');
     expect(initCommand.description).toContain('Initialize');
-    expect(initCommand.options).toHaveLength(8);
+    expect(initCommand.options).toHaveLength(7);
   });
 
   it('should initialize a dev project with mode flag', async () => {
@@ -112,7 +112,7 @@ describe('Init Command', () => {
         force: false,
         yes: true,
         skipEnv: undefined,
-        noImageTransform: undefined,
+        imageTransform: undefined,
         projectName: 'supastorj',
       }
     );
@@ -130,7 +130,7 @@ describe('Init Command', () => {
         force: false,
         yes: true,
         skipEnv: undefined,
-        skipDeps: undefined,
+        imageTransform: undefined,
         projectName: 'supastorj',
         services: undefined,
         dryRun: undefined,
@@ -156,7 +156,7 @@ describe('Init Command', () => {
   });
 
   it('should handle --no-image-transform option for dev mode', async () => {
-    const options = { mode: 'dev', force: false, yes: true, noImageTransform: true };
+    const options = { mode: 'dev', force: false, yes: true, imageTransform: false };
     const { deployDevEnvironment } = await import('../../src/commands/init/dev-environment.js');
     
     await initCommand.action(context, options);
@@ -167,7 +167,7 @@ describe('Init Command', () => {
         force: false,
         yes: true,
         skipEnv: undefined,
-        noImageTransform: true,
+        imageTransform: false,
         projectName: 'supastorj',
       }
     );
@@ -187,8 +187,8 @@ describe('Init Command', () => {
     );
   });
 
-  it('should handle --skip-deps option for prod mode', async () => {
-    const options = { mode: 'prod', force: false, yes: true, skipDeps: true };
+  it('should handle --skip-env option for prod mode', async () => {
+    const options = { mode: 'prod', force: false, yes: true, skipEnv: true };
     const { deployProdEnvironment } = await import('../../src/commands/init/prod-environment.js');
     
     await initCommand.action(context, options);
@@ -196,7 +196,7 @@ describe('Init Command', () => {
     expect(deployProdEnvironment).toHaveBeenCalledWith(
       context,
       expect.objectContaining({
-        skipDeps: true,
+        skipEnv: true,
       })
     );
   });
@@ -213,7 +213,7 @@ describe('Init Command', () => {
         force: false,
         yes: true,
         skipEnv: undefined,
-        skipDeps: undefined,
+        imageTransform: undefined,
         projectName: 'supastorj',
         services: 'postgres,storage',
         dryRun: undefined,
@@ -233,7 +233,7 @@ describe('Init Command', () => {
         force: false,
         yes: true,
         skipEnv: undefined,
-        noImageTransform: undefined,
+        imageTransform: undefined,
         projectName: 'supastorj',
       }
     );

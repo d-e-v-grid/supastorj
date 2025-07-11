@@ -19,6 +19,8 @@ export interface LoggerOptions {
 export class LoggerImpl implements Logger {
   private logger: pino.Logger;
   private auditLogger?: pino.Logger;
+  private originalLevel?: string;
+  private isSilenced: boolean = false;
 
   constructor(options: LoggerOptions = {}) {
     const { level = 'info', auditLog = true, auditLogPath = './logs/audit.log' } = options;
@@ -31,11 +33,12 @@ export class LoggerImpl implements Logger {
       }
     }
 
-    // Configure pretty printing for console
+    // Configure pretty printing for console with sync option to prevent buffering
     const prettyStream = pinoPretty({
       colorize: true,
       translateTime: 'HH:MM:ss',
       ignore: 'pid,hostname',
+      sync: true, // Synchronous output to prevent buffering conflicts with prompts
       customPrettifiers: {
         level: (inputData: string | object) => {
           const levelNum = typeof inputData === 'object' ? (inputData as any).level : parseInt(inputData);
@@ -216,5 +219,36 @@ export class LoggerImpl implements Logger {
    */
   getLevel(): string {
     return this.logger.level;
+  }
+
+  /**
+   * Temporarily silence the logger (useful during prompts)
+   */
+  silence(): void {
+    if (!this.isSilenced) {
+      this.originalLevel = this.logger.level;
+      this.logger.level = 'silent';
+      this.isSilenced = true;
+    }
+  }
+
+  /**
+   * Restore the logger after silencing
+   */
+  unsilence(): void {
+    if (this.isSilenced && this.originalLevel) {
+      this.logger.level = this.originalLevel;
+      this.isSilenced = false;
+    }
+  }
+
+  /**
+   * Flush any buffered output
+   */
+  flush(): void {
+    // Force flush stdout to ensure all logs are written
+    if (process.stdout.write('')) {
+      process.stdout.uncork();
+    }
   }
 }

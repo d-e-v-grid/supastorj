@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-01-11
+
+### Changed
+- **CLI**: Simplified deployment modes - removed staging environment, now only supports development and production
+- **CLI**: Improved service management with new centralized `service-manager.ts` utility
+- **CLI**: Enhanced production mode with multi-service support (Storage API + Postgres Meta)
+- **CLI**: Changed default behavior of start command - detached mode is now default
+- **CLI**: Postgres Meta API port changed from 8080 to 5001 to avoid common conflicts
+- **CLI**: Better systemd integration with proper PID tracking and service status monitoring
+- **CLI**: Improved logger integration with new `prompt-wrapper.ts` to handle conflicts with interactive prompts
+
+### Added
+- **CLI**: Support for Postgres Meta API as a manageable service in production mode
+- **CLI**: New systemd service template `supastorj-postgres-meta.service`
+- **CLI**: `--attach` flag for start command to run services in foreground mode
+- **CLI**: `--image-transform` flag for init command (replaced inverted `--no-image-transform`)
+- **CLI**: Logger methods: `silence()`, `unsilence()`, and `flush()` for better prompt integration
+- **CLI**: Service discovery using PID files in `.supastorj/` directory
+
+### Fixed
+- **CLI**: Conflicts between logger output and interactive prompts (Clack/Ink)
+- **CLI**: Production status command now shows all enabled services correctly
+- **CLI**: Better error handling and user feedback during service operations
+- **CLI**: Proper MainPID capture in systemd services for accurate status tracking
+
+### Removed
+- **CLI**: Plugin system entirely (`plugin-manager.ts` and related types)
+- **CLI**: `--skip-deps` flag from init command
+- **CLI**: `--detach` flag from start command (detached is now default)
+- **CLI**: `README-DEPLOYMENT.md` template
+- **CLI**: Test shell scripts from `test-unified/` directory
+
 ## [0.2.0] - 2025-01-11
 
 ### Breaking Changes

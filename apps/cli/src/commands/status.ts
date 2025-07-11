@@ -10,9 +10,11 @@ import { readFile } from 'fs/promises';
 import { spinner } from '@clack/prompts';
 import { Box, Text, render, useApp, useInput, useStdin } from 'ink';
 
+import { withInkRender } from '../utils/prompt-wrapper.js';
 import { ConfigManager } from '../config/config-manager.js';
 import { DockerAdapter } from '../adapters/docker-adapter.js';
-import { Environment, ServiceStatus, CommandContext, CommandDefinition } from '../types/index.js';
+import { getEnabledServices } from '../utils/service-manager.js';
+import { Environment, ServiceStatus, CommandContext, DeploymentMode, CommandDefinition } from '../types/index.js';
 
 interface ServiceInfo {
   name: string;
@@ -52,7 +54,7 @@ export const statusCommand: CommandDefinition = {
       const environment = options.environment || config.environment || Environment.Development;
 
       // Handle based on environment
-      if (environment === Environment.Development || environment === Environment.Staging) {
+      if (environment === Environment.Development) {
         // Use Docker Compose status
         await showDockerComposeStatus(context, options);
       } else if (environment === Environment.Production) {
@@ -113,6 +115,9 @@ async function showDockerComposeStatus(context: CommandContext, options: any) {
   await configManager.load();
   const config = configManager.getConfig();
   const projectName = config.projectName || 'supastorj';
+
+  // Flush logger before starting spinner
+  context.logger.flush?.();
 
   const s = spinner();
   s.start('Checking service status...');
@@ -235,15 +240,15 @@ async function showDockerComposeStatus(context: CommandContext, options: any) {
           React.createElement(Text, { bold: true }, 'Ports'.padEnd(20)),
           React.createElement(Text, { bold: true }, 'Uptime')
         ),
-        ...serviceList.map(s =>
+        ...serviceList.map(svc =>
           React.createElement(
             Box,
-            { key: s.name },
-            React.createElement(Text, { color: 'cyan' }, s.name.padEnd(20)),
-            React.createElement(Text, { color: s.status === 'running' ? 'green' : 'red' }, s.status.padEnd(12)),
-            React.createElement(Text, { color: s.health === 'healthy' ? 'green' : 'yellow' }, s.health.padEnd(12)),
-            React.createElement(Text, null, s.ports.padEnd(20)),
-            React.createElement(Text, null, s.uptime)
+            { key: svc.name },
+            React.createElement(Text, { color: 'cyan' }, svc.name.padEnd(20)),
+            React.createElement(Text, { color: svc.status === 'running' ? 'green' : 'red' }, svc.status.padEnd(12)),
+            React.createElement(Text, { color: svc.health === 'healthy' ? 'green' : 'yellow' }, svc.health.padEnd(12)),
+            React.createElement(Text, null, svc.ports.padEnd(20)),
+            React.createElement(Text, null, svc.uptime)
           )
         ),
         React.createElement(Box, { marginTop: 1 },
@@ -268,13 +273,15 @@ async function showDockerComposeStatus(context: CommandContext, options: any) {
       process.stdout.write('\u001B[?25h'); // Show cursor
     });
 
-    // Render the app with adapters
-    const app = render(React.createElement(StatusTable, {
-      adapters,
-      onExit: exitHandler
-    }), {
-      exitOnCtrlC: true  // Let Ink handle Ctrl+C properly
-    });
+    // Render the app with adapters using wrapper
+    const app = withInkRender(context.logger, () =>
+      render(React.createElement(StatusTable, {
+        adapters,
+        onExit: exitHandler
+      }), {
+        exitOnCtrlC: true  // Let Ink handle Ctrl+C properly
+      })
+    );
 
     // Wait for app to unmount properly
     app.waitUntilExit().then(() => {
@@ -310,8 +317,8 @@ async function showDockerComposeStatus(context: CommandContext, options: any) {
 
     console.log(chalk.gray('─'.repeat(80)));
 
-    const runningCount = services.filter(s => s.status === 'running').length;
-    const healthyCount = services.filter(s => s.health === 'healthy').length;
+    const runningCount = services.filter(svc => svc.status === 'running').length;
+    const healthyCount = services.filter(svc => svc.health === 'healthy').length;
 
     console.log('\n' + chalk.gray(
       `${runningCount}/${services.length} services running, ` +
@@ -321,84 +328,202 @@ async function showDockerComposeStatus(context: CommandContext, options: any) {
 }
 
 async function showProductionStatus(context: CommandContext, options: any) {
+  // Flush logger before starting spinner
+  context.logger.flush?.();
+
   const s = spinner();
   s.start('Checking production service status...');
 
   try {
-    // Check if storage process is running
-    const pidPath = join(process.cwd(), 'logs/storage-api.pid');
+    // Load configuration to get service details
+    const configManager = new ConfigManager();
+    await configManager.load();
+    const config = configManager.getConfig();
 
-    if (!existsSync(pidPath)) {
-      s.stop('Service check complete');
-      console.log('\n' + chalk.bold('Service Status:'));
-      console.log(chalk.gray('─'.repeat(80)));
-      console.log(chalk.cyan('storage-api'.padEnd(20)) + chalk.red('stopped'.padEnd(12)));
-      console.log(chalk.gray('─'.repeat(80)));
-      console.log('\n' + chalk.gray('Service is not running. Start with: supastorj start'));
-      return;
+    const services: ServiceInfo[] = [];
+
+    // Check if process is running (for bare metal deployment)
+    if (config.deploymentMode === DeploymentMode.BareMetal) {
+      // Get enabled services
+      const enabledServices = await getEnabledServices(configManager);
+
+      for (const service of enabledServices) {
+        const pidPath = join(process.cwd(), '.supastorj', service.pidFile);
+        let serviceRunning = false;
+        let pidNum = 0;
+
+        // First check systemd service
+        try {
+          const status = await $`systemctl is-active ${service.serviceFile}`;
+          serviceRunning = status.stdout.trim() === 'active';
+
+          if (serviceRunning) {
+            try {
+              const mainPid = await $`systemctl show -p MainPID ${service.serviceFile}`;
+              const pidMatch = mainPid.stdout.match(/MainPID=(\d+)/);
+              if (pidMatch && pidMatch[1] && pidMatch[1] !== '0') {
+                pidNum = parseInt(pidMatch[1]);
+              }
+            } catch {
+              // Couldn't get PID from systemd
+            }
+          }
+        } catch {
+          // systemd not available or service not found, check PID file
+          if (existsSync(pidPath)) {
+            const pid = await readFile(pidPath, 'utf-8');
+            pidNum = parseInt(pid.trim());
+
+            try {
+              process.kill(pidNum, 0);
+              serviceRunning = true;
+            } catch {
+              // Process doesn't exist, clean up stale PID file
+              $.verbose = false;
+              await $`rm -f ${pidPath}`;
+            }
+          }
+        }
+
+        // Get port for the service
+        let port = service.port;
+        if (service.name === 'storage' && config.services?.storage?.port) {
+          port = config.services.storage.port;
+        } else if (service.name === 'postgres-meta' && config.services?.postgresMeta?.port) {
+          port = config.services.postgresMeta.port;
+        }
+
+        services.push({
+          name: service.displayName,
+          status: serviceRunning ? 'running' : 'stopped',
+          health: serviceRunning ? 'operational' : 'not running',
+          ports: port.toString(),
+          uptime: serviceRunning && pidNum ? `PID: ${pidNum}` : '-',
+        });
+      }
+    } else {
+      // For docker deployment in production, check service availability
+      const storagePort = config.services?.storage?.port || 5000;
+      const storageHost = config.services?.storage?.host || 'localhost';
+
+      services.push({
+        name: 'Storage API',
+        status: 'external',
+        health: 'check manually',
+        ports: `${storageHost}:${storagePort}`,
+        uptime: '-',
+      });
+
+      if (config.services?.postgresMeta?.enabled !== false) {
+        const metaPort = config.services?.postgresMeta?.port || 5001;
+        const metaHost = config.services?.postgresMeta?.host || 'localhost';
+
+        services.push({
+          name: 'Postgres Meta API',
+          status: 'external',
+          health: 'check manually',
+          ports: `${metaHost}:${metaPort}`,
+          uptime: '-',
+        });
+      }
     }
 
-    const pid = await readFile(pidPath, 'utf-8');
-    const pidNum = parseInt(pid.trim());
+    // Check other configured services by connectivity
+    if (config.services?.postgres?.enabled) {
+      services.push({
+        name: 'postgres',
+        status: 'external',
+        health: 'check connectivity',
+        ports: `${config.services.postgres.host}:${config.services.postgres.port}`,
+        uptime: '-',
+      });
+    }
 
-    // Check if process is running
-    try {
-      process.kill(pidNum, 0);
-      // Process exists
+    if (config.services?.pgBouncer?.enabled) {
+      services.push({
+        name: 'pgbouncer',
+        status: 'external',
+        health: 'check connectivity',
+        ports: `${config.services.pgBouncer.host}:${config.services.pgBouncer.port}`,
+        uptime: '-',
+      });
+    }
 
-      // Try to get more info from the API
-      const envPath = join(process.cwd(), '.env');
-      let port = '5000';
+    if (config.services?.minio?.enabled) {
+      services.push({
+        name: 'minio',
+        status: 'external',
+        health: 'check connectivity',
+        ports: `${config.services.minio.host}:${config.services.minio.port}`,
+        uptime: '-',
+      });
+    }
 
-      if (existsSync(envPath)) {
-        const envContent = await readFile(envPath, 'utf-8');
-        const match = envContent.match(/SERVER_PORT=(\d+)/);
-        if (match) {
-          port = match[1] || '5000';
+    if (config.services?.imgproxy?.enabled) {
+      services.push({
+        name: 'imgproxy',
+        status: 'external',
+        health: 'check connectivity',
+        ports: `${config.services.imgproxy.host}:${config.services.imgproxy.port}`,
+        uptime: '-',
+      });
+    }
+
+    s.stop('Service status retrieved');
+
+    if (options.json) {
+      // Output as JSON
+      console.log(JSON.stringify(services, null, 2));
+    } else {
+      // Simple table output
+      console.log('\n' + chalk.bold('Service Status (Production):'));
+      console.log(chalk.gray('─'.repeat(80)));
+      console.log(
+        chalk.bold('Service'.padEnd(20)) +
+        chalk.bold('Status'.padEnd(12)) +
+        chalk.bold('Health'.padEnd(20)) +
+        chalk.bold('Connection'.padEnd(25)) +
+        chalk.bold('Info')
+      );
+      console.log(chalk.gray('─'.repeat(80)));
+
+      for (const service of services) {
+        const statusColor = service.status === 'running' ? chalk.green :
+          service.status === 'stopped' ? chalk.red : chalk.yellow;
+        const healthColor = service.health === 'operational' || service.health === 'healthy' ? chalk.green :
+          service.health === 'not running' ? chalk.red : chalk.yellow;
+
+        console.log(
+          chalk.cyan(service.name.padEnd(20)) +
+          statusColor(service.status.padEnd(12)) +
+          healthColor(service.health.padEnd(20)) +
+          service.ports.padEnd(25) +
+          service.uptime
+        );
+      }
+
+      console.log(chalk.gray('─'.repeat(80)));
+
+      // Additional info based on deployment mode
+      if (config.deploymentMode === DeploymentMode.BareMetal) {
+        const runningCount = services.filter(svc => svc.status === 'running').length;
+        console.log('\n' + chalk.gray(`${runningCount}/${services.length} services running locally`));
+
+        const storageService = services.find(svc => svc.name === 'Storage API' && svc.status === 'running');
+        if (storageService) {
+          console.log(chalk.gray(`Storage API available at: http://localhost:${storageService.ports}`));
+          console.log(chalk.gray('Logs: sudo journalctl -u supastorj-storage.service -f'));
         }
-      }
 
-      s.stop('Service is running');
-
-      if (options.json) {
-        console.log(JSON.stringify([{
-          name: 'storage-api',
-          status: 'running',
-          pid: pidNum,
-          port
-        }], null, 2));
+        const metaService = services.find(svc => svc.name === 'Postgres Meta API' && svc.status === 'running');
+        if (metaService) {
+          console.log(chalk.gray(`Postgres Meta API available at: http://localhost:${metaService.ports}`));
+          console.log(chalk.gray('Logs: sudo journalctl -u supastorj-postgres-meta.service -f'));
+        }
       } else {
-        console.log('\n' + chalk.bold('Service Status:'));
-        console.log(chalk.gray('─'.repeat(80)));
-        console.log(
-          chalk.bold('Service'.padEnd(20)) +
-          chalk.bold('Status'.padEnd(12)) +
-          chalk.bold('PID'.padEnd(10)) +
-          chalk.bold('Port')
-        );
-        console.log(chalk.gray('─'.repeat(80)));
-        console.log(
-          chalk.cyan('storage-api'.padEnd(20)) +
-          chalk.green('running'.padEnd(12)) +
-          pidNum.toString().padEnd(10) +
-          port
-        );
-        console.log(chalk.gray('─'.repeat(80)));
-        console.log('\n' + chalk.gray(`API available at: http://localhost:${port}`));
-        console.log(chalk.gray('Logs: tail -f logs/storage-api.log'));
+        console.log('\n' + chalk.gray('External services - verify connectivity manually'));
+        console.log(chalk.gray('Use connection strings from .env file'));
       }
-    } catch (error) {
-      // Process doesn't exist
-      s.stop('Service is not running');
-      console.log('\n' + chalk.bold('Service Status:'));
-      console.log(chalk.gray('─'.repeat(80)));
-      console.log(chalk.cyan('storage-api'.padEnd(20)) + chalk.red('stopped'.padEnd(12)) + chalk.gray('(stale PID file)'));
-      console.log(chalk.gray('─'.repeat(80)));
-      console.log('\n' + chalk.gray('Service is not running. Start with: supastorj start'));
-
-      // Clean up stale PID file
-      $.verbose = false;
-      await $`rm -f ${pidPath}`;
     }
   } catch (error: any) {
     s.stop('Failed to check production status');

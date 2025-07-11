@@ -1,5 +1,5 @@
 [Unit]
-Description=Supastorj Storage API
+Description=Supastorj Postgres Meta API
 After=network.target postgresql.service
 
 [Service]
@@ -12,7 +12,7 @@ EnvironmentFile={{workingDirectory}}/.env
 
 # For source deployment
 {{#useSource}}
-ExecStart=/usr/bin/node {{workingDirectory}}/storage/dist/start/server.js
+ExecStart=/usr/bin/node {{workingDirectory}}/postgres-meta/dist/server/server.js
 {{/useSource}}
 
 Restart=always

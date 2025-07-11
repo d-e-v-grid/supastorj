@@ -266,7 +266,7 @@ describe('DockerAdapter', () => {
 
     it('should follow logs', async () => {
       const mockStream = {
-        [Symbol.asyncIterator]: async function* () {
+        async *[Symbol.asyncIterator] () {
           yield Buffer.from('test log 1\n');
           yield Buffer.from('test log 2\n');
         },

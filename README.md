@@ -33,14 +33,17 @@ npm install -g @supastorj/cli
 # Initialize a new project
 supastorj init
 
-# Development mode (Docker)
-supastorj up
+# Start services (defaults to detached mode)
+supastorj start
 
-# Production mode (Bare metal)
-sudo supastorj deploy
+# Start services in foreground (attached mode)
+supastorj start --attach
 
 # Check service status
 supastorj status
+
+# Stop services
+supastorj stop
 
 # View logs
 supastorj logs -f
@@ -55,10 +58,11 @@ supastorj logs -f
 
   * Interactive project initialization with template scaffolding
   * Docker Compose-based service orchestration
+  * Systemd service management for production deployments
   * Real-time service health monitoring
   * Log streaming and aggregation
   * Configuration management with environment inheritance
-  * Plugin-based architecture for extensibility
+  * Multi-service support (Storage API + Postgres Meta)
   * Global installation support for system-wide usage
 
 ### 2. **Backend API Server (apps/admin-api)** — Planned
@@ -119,11 +123,11 @@ supastorj logs -f
 - Port forwarding to localhost
 - Hot reloading support
 
-### Production Mode (Bare Metal)
-- Direct installation on Ubuntu/Debian servers
-- Systemd service management
+### Production Mode
+- Connects to existing PostgreSQL and S3 infrastructure
+- Runs Supabase Storage API and Postgres Meta API as systemd services
 - Optimized for performance
-- Suitable for production workloads
+- Suitable for production workloads with existing infrastructure
 
 ## Scalability and Security
 
@@ -142,7 +146,7 @@ The platform manages the following services out of the box:
 - **PgBouncer** - Connection pooling for better performance
 - **MinIO** - S3-compatible object storage backend
 - **Supabase Storage API** - Core storage service
-- **Postgres-meta** - Database schema management API
+- **Postgres-meta** - Database schema management API (port 5001)
 - **imgproxy** - On-the-fly image transformation service
 - **Redis** (optional) - Caching and rate limiting
 
@@ -175,12 +179,19 @@ yarn link:global
 ## CLI Commands
 
 - `supastorj init` - Initialize a new project
-- `supastorj up` - Start all services (Docker mode)
-- `supastorj down` - Stop all services
+- `supastorj start` - Start all services
+- `supastorj stop` - Stop all services
 - `supastorj status` - Show service status
 - `supastorj logs` - View service logs
-- `supastorj deploy` - Deploy on bare metal (production mode)
 - `supastorj --help` - Show help information
+
+### Command Options
+
+- `init`: `--mode` (dev/prod), `--image-transform`
+- `start`: `--attach` (run in foreground)
+- `stop`: `--volumes`, `--images` (Docker mode cleanup)
+- `status`: `--json`, `--watch`
+- `logs`: `--follow`, `--service <name>`
 
 ## Contributing
 

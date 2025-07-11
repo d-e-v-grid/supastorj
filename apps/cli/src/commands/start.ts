@@ -1,9 +1,9 @@
-import { join } from 'path';
 import { $, fs, chalk } from 'zx';
 import { createServer } from 'net';
 
 import { ConfigManager } from '../config/config-manager.js';
 import { CommandContext, CommandDefinition, StorageBackendType } from '../types/index.js';
+import { getEnabledServices, startServiceSystemd, startServiceAttached } from '../utils/service-manager.js';
 
 // Set zx options
 $.verbose = false;
@@ -46,8 +46,6 @@ async function getDeploymentMode(configManager: ConfigManager): Promise<string> 
     switch (config.environment) {
       case 'production':
         return 'production';
-      case 'staging':
-        return 'staging';
       default:
         return 'development';
     }
@@ -87,11 +85,6 @@ export const startCommand: CommandDefinition = {
       flags: '--prod',
       description: 'Force production mode',
       defaultValue: false,
-    },
-    {
-      flags: '-d, --detach',
-      description: 'Run in detached mode',
-      defaultValue: true,
     },
     {
       flags: '-a, --attach',
@@ -140,13 +133,13 @@ export const startCommand: CommandDefinition = {
       if (options.dev) deploymentMode = 'development';
       if (options.prod) deploymentMode = 'production';
 
-      // Handle attach/detach modes
-      const attachMode = options.attach || !options.detach;
+      // Handle attach mode
+      const attachMode = options.attach;
 
       context.logger.info(`Starting Supastorj in ${chalk.cyan(deploymentMode)} mode...`);
 
       // Development mode - Use Docker Compose
-      if (deploymentMode === 'development' || deploymentMode === 'staging') {
+      if (deploymentMode === 'development') {
         // Check if docker-compose.yml exists
         if (!await fs.pathExists('docker-compose.yml')) {
           context.logger.error('docker-compose.yml not found!');
@@ -249,9 +242,9 @@ export const startCommand: CommandDefinition = {
           // Run in attached mode with inherited stdio
           await $`${composeCmd} ${composeArgs}`.pipe(process.stdout);
         } else {
+          // Run docker compose
           try {
-            await $`${composeCmd} ${composeArgs}`;
-            context.logger.info(chalk.green('✓') + ' Services started successfully');
+            await $`${composeCmd} ${composeArgs}`.quiet();
 
             // Wait for services to be healthy
             context.logger.info('Waiting for services to be healthy...');
@@ -268,106 +261,45 @@ export const startCommand: CommandDefinition = {
 
         // Production mode
       } else if (deploymentMode === 'production') {
-        const useDocker = envVars['USE_DOCKER'] === 'true';
-
         // Create logs directory if it doesn't exist
         await fs.ensureDir('logs');
 
-        if (useDocker) {
-          context.logger.info('Starting Storage API with Docker...');
+        // Get enabled services
+        const enabledServices = await getEnabledServices(configManager);
 
-          // Check if Docker is installed
-          try {
-            await $`docker --version`;
-          } catch {
-            context.logger.error('Docker is not installed!');
-            process.exit(1);
+        if (enabledServices.length === 0) {
+          context.logger.error('No services enabled for production mode');
+          process.exit(1);
+        }
+
+        if (attachMode) {
+          // In attach mode, we can only run one service at a time
+          if (enabledServices.length > 1) {
+            context.logger.warn('Multiple services enabled. In attach mode, only the first service will be started.');
+            context.logger.info('Use systemd mode (without --attach) to run all services.');
           }
 
-          // Pull latest image if needed
-          await $`docker pull supabase/storage-api:v1.13.1`;
-
-          // Stop existing container if running
-          try {
-            await $`docker stop storage-api`;
-            await $`docker rm storage-api`;
-          } catch {
-            // Container might not exist, that's ok
-          }
-
-          // Run container
-          const serverPort = envVars['SERVER_PORT'] || '5000';
-          const dockerArgs = [
-            'run',
-            attachMode ? '--rm' : '-d',
-            '--name', 'storage-api',
-          ];
-
-          if (!attachMode) {
-            dockerArgs.push('--restart', 'unless-stopped');
-          }
-
-          dockerArgs.push(
-            '-p', `${serverPort}:5000`,
-            '--env-file', '.env',
-            '-v', `${process.cwd()}/logs:/app/logs`,
-            '-v', `${process.cwd()}/data/storage:/var/lib/storage`,
-            'supabase/storage-api:v1.13.1'
-          );
-
-          if (attachMode) {
-            context.logger.info('Starting Storage API in attached mode (press Ctrl+C to stop)...');
-            await $`docker ${dockerArgs}`.pipe(process.stdout);
-          } else {
-            await $`docker ${dockerArgs}`;
-            context.logger.info(chalk.green('✓') + ` Storage API started on port ${serverPort}`);
-            context.logger.info('View logs: docker logs -f storage-api');
+          // Start the first enabled service in attached mode
+          const firstService = enabledServices[0];
+          if (firstService) {
+            await startServiceAttached(context, firstService, envVars);
           }
         } else {
-          context.logger.info('Starting Storage API from source...');
-
-          // Check if storage directory exists
-          if (!await fs.pathExists('./storage')) {
-            context.logger.error('./storage directory not found!');
-            context.logger.error('Run "supastorj init prod" with source build option first.');
-            process.exit(1);
+          // Start all enabled services using systemd
+          for (const service of enabledServices) {
+            await startServiceSystemd(context, service, envVars);
           }
 
-          // Check if built
-          if (!await fs.pathExists('./storage/dist/start/server.js')) {
-            context.logger.error('Storage server not built!');
-            context.logger.error('Run "npm run build" in the storage directory.');
-            process.exit(1);
-          }
-
-          // Run migrations
-          context.logger.info('Running database migrations...');
-          try {
-            await $`cd storage && npm run db:migrate`;
-          } catch {
-            context.logger.warn('Migration may have already been applied');
-          }
-
-          // Start the server
-          if (attachMode) {
-            context.logger.info('Starting server in attached mode (press Ctrl+C to stop)...');
-            context.logger.info(`Server: http://${envVars['SERVER_HOST'] || '0.0.0.0'}:${envVars['SERVER_PORT'] || '5000'}`);
-            await $`cd storage && node dist/start/server.js`.pipe(process.stdout);
-          } else {
-            // Start in background using nohup
-            const logFile = join(process.cwd(), 'logs/storage-api.log');
-            const pidFile = join(process.cwd(), 'storage-api.pid');
-
-            // Use bash to run the command in background
-            const result = await $`bash -c "cd storage && nohup node dist/start/server.js > ${logFile} 2>&1 & echo $!"`;
-            const pid = result.stdout.trim();
-
-            await fs.writeFile(pidFile, pid, 'utf-8');
-
-            context.logger.info(chalk.green('✓') + ' Storage API started!');
-            context.logger.info(`Server: http://${envVars['SERVER_HOST'] || '0.0.0.0'}:${envVars['SERVER_PORT'] || '5000'}`);
-            context.logger.info(`PID: ${pid}`);
-            context.logger.info('View logs: tail -f logs/storage-api.log');
+          context.logger.info(chalk.green('\n✓ All services started successfully!'));
+          context.logger.info('\nService endpoints:');
+          for (const service of enabledServices) {
+            let port = service.port;
+            if (service.name === 'storage' && envVars['SERVER_PORT']) {
+              port = parseInt(envVars['SERVER_PORT']);
+            } else if (service.name === 'postgres-meta' && envVars['PG_META_PORT']) {
+              port = parseInt(envVars['PG_META_PORT']);
+            }
+            context.logger.info(`  ${service.displayName}: http://localhost:${port}`);
           }
         }
       } else {

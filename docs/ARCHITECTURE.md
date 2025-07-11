@@ -30,7 +30,7 @@ Supastorj is a modern DevOps platform for autonomous and flexible management of 
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐   │
-│  │   Command   │  │   Event      │  │   Plugin     │  │   Config    │   │
+│  │   Command   │  │   Event      │  │   Service    │  │   Config    │   │
 │  │   Router    │  │   Bus        │  │   Manager    │  │   Engine    │   │
 │  └──────┬──────┘  └──────┬───────┘  └──────┬───────┘  └──────┬──────┘   │
 │         │                │                  │                  │        │
@@ -79,14 +79,15 @@ The command-line interface is the primary interaction point for DevOps operation
 - Interactive TUI using Ink (React for terminal)
 - Command-based interface with rich autocompletion
 - Real-time monitoring and status dashboards
-- Plugin system for custom commands
-- Multi-environment support (dev/staging/prod)
+- Simplified deployment modes (dev/prod)
+- Systemd service management for production
 
 **Technology Stack:**
 - TypeScript with strict mode
 - Ink for TUI components
 - Commander.js for command parsing
 - Zod for schema validation
+- Clack for interactive prompts
 
 ### 2. Backend API (apps/admin-api)
 
@@ -144,26 +145,21 @@ Abstraction layer for external service integration.
 - Role and permission management
 - Database introspection
 
-### 5. Plugin System
+### 5. Service Management
 
-Extensible architecture for custom functionality.
+Centralized service lifecycle management for both Docker and systemd deployments.
 
-**Plugin Types:**
-- Command plugins (new CLI commands)
-- Service plugins (new adapters)
-- UI plugins (dashboard widgets)
-- Hook plugins (lifecycle events)
+**Service Types:**
+- Docker containers (development mode)
+- Systemd services (production mode)
+- External services (existing infrastructure)
 
-**Plugin API:**
-```typescript
-interface Plugin {
-  name: string;
-  version: string;
-  type: PluginType;
-  init(context: PluginContext): Promise<void>;
-  destroy?(): Promise<void>;
-}
-```
+**Service Manager Features:**
+- Unified start/stop interface
+- PID tracking and management
+- Health status monitoring
+- Automatic service discovery
+- Support for attached/detached modes
 
 ### 6. Event System
 
@@ -244,8 +240,8 @@ All operations are logged with:
 ### Development Environment
 
 ```bash
-supastorj init --dev
-supastorj up --dev
+supastorj init --mode development
+supastorj start
 ```
 
 - Single-node deployment
@@ -256,8 +252,8 @@ supastorj up --dev
 ### Production Environment
 
 ```bash
-supastorj init --prod
-supastorj up --prod --scale storage=3 --scale meta=2
+supastorj init --mode production
+supastorj start --attach  # Run in foreground
 ```
 
 - Multi-node deployment
@@ -265,17 +261,17 @@ supastorj up --prod --scale storage=3 --scale meta=2
 - Health checks and auto-recovery
 - Monitoring and alerting
 
-### Bare Metal Deployment
+### Production Deployment
 
 ```bash
-supastorj bootstrap --baremetal
-supastorj deploy --target=production
+supastorj init --mode production
+supastorj start
 ```
 
-- System dependency installation
+- Connects to existing PostgreSQL and S3 infrastructure
 - Systemd service configuration
-- Firewall rules setup
-- SSL certificate management
+- Multi-service support (Storage API + Postgres Meta)
+- PID-based service tracking
 
 ## Monitoring & Observability
 

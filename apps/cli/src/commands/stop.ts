@@ -1,6 +1,8 @@
+import { join } from 'path';
 import { $, fs, chalk } from 'zx';
 
 import { ConfigManager } from '../config/config-manager.js';
+import { getEnabledServices } from '../utils/service-manager.js';
 import { CommandContext, CommandDefinition } from '../types/index.js';
 
 // Set zx options
@@ -14,8 +16,6 @@ async function getDeploymentMode(configManager: ConfigManager): Promise<string> 
     switch (config.environment) {
       case 'production':
         return 'production';
-      case 'staging':
-        return 'staging';
       default:
         return 'development';
     }
@@ -87,7 +87,7 @@ export const stopCommand: CommandDefinition = {
       context.logger.info(`Stopping Supastorj services in ${chalk.cyan(deploymentMode)} mode...`);
 
       // Development mode - Use Docker Compose
-      if (deploymentMode === 'development' || deploymentMode === 'staging') {
+      if (deploymentMode === 'development') {
 
         // Check if docker-compose.yml exists
         if (!await fs.pathExists('docker-compose.yml')) {
@@ -98,10 +98,10 @@ export const stopCommand: CommandDefinition = {
         // Check which docker compose command to use
         let useDockerCompose = false;
         try {
-          await $`docker compose version`;
+          await $`docker compose version`.quiet();
         } catch {
           try {
-            await $`docker-compose version`;
+            await $`docker-compose version`.quiet();
             useDockerCompose = true;
           } catch {
             context.logger.error('Docker Compose is not installed!');
@@ -125,7 +125,7 @@ export const stopCommand: CommandDefinition = {
         }
 
         try {
-          await $`${composeCmd} ${composeArgs}`;
+          await $`${composeCmd} ${composeArgs}`.quiet();
           context.logger.info(chalk.green('✓') + ' All services stopped successfully!');
         } catch (error) {
           context.logger.error('Failed to stop services');
@@ -134,57 +134,57 @@ export const stopCommand: CommandDefinition = {
 
         // Production mode
       } else if (deploymentMode === 'production') {
+        const enabledServices = await getEnabledServices(configManager);
+        let stoppedCount = 0;
 
-        // Check if using Docker or direct execution
-        const useDocker = envVars['USE_DOCKER'] === 'true';
+        // Stop all enabled services
+        for (const service of enabledServices) {
+          const pidFile = join(process.cwd(), '.supastorj', service.pidFile);
 
-        if (useDocker) {
-          context.logger.info('Stopping Storage API Docker container...');
-
-          // Check if container exists
+          // First check if systemd service is running
+          let serviceRunning = false;
           try {
-            const containerExists = await $`docker ps -a --format '{{.Names}}' | grep -q '^storage-api$'`.exitCode === 0;
-
-            if (containerExists) {
-              // Stop container
-              try {
-                await $`docker stop storage-api`;
-                context.logger.info('Container stopped, removing...');
-                await $`docker rm storage-api`;
-                context.logger.info(chalk.green('✓') + ' Storage API container stopped and removed');
-              } catch (error) {
-                context.logger.warn('Container was not running or failed to stop');
-              }
-            } else {
-              context.logger.warn('Container "storage-api" not found');
-            }
+            const status = await $`systemctl is-active ${service.serviceFile}`.quiet();
+            serviceRunning = status.stdout.trim() === 'active';
           } catch {
-            context.logger.warn('No running containers found');
+            // Service not active or systemd not available
           }
 
-        } else {
-          context.logger.info('Stopping Storage API process...');
-
-          const pidFile = 'storage-api.pid';
-
-          if (await fs.pathExists(pidFile)) {
+          if (serviceRunning) {
+            // Stop systemd service
+            context.logger.info(`Stopping ${service.displayName} systemd service...`);
             try {
-              const pid = (await fs.readFile(pidFile, 'utf-8')).trim();
+              await $`sudo systemctl stop ${service.serviceFile}`.quiet();
+              context.logger.info(chalk.green('✓') + ` ${service.displayName} service stopped`);
+              stoppedCount++;
+            } catch (error) {
+              context.logger.error(`Failed to stop ${service.displayName} service. Please run with sudo.`);
+              throw error;
+            }
+          } else if (await fs.pathExists(pidFile)) {
+            // Stop process using PID file (--attach mode)
+            context.logger.info(`Stopping ${service.displayName} process...`);
+
+            try {
+              const pidContent = (await fs.readFile(pidFile, 'utf-8')).trim();
+
+              // Regular process with PID
+              const pid = pidContent;
 
               // Check if process is running
               try {
-                await $`kill -0 ${pid}`;
+                await $`kill -0 ${pid}`.quiet();
 
-                // Process is running, kill it
-                await $`kill ${pid}`;
-                context.logger.info(`Stopping Storage API (PID: ${pid})...`);
+                // Process is running, send SIGTERM
+                await $`kill -TERM ${pid}`.quiet();
+                context.logger.info(`Stopping ${service.displayName} (PID: ${pid})...`);
 
-                // Wait for process to stop
+                // Wait for graceful shutdown
                 let count = 0;
                 while (count < 10) {
                   try {
-                    await $`kill -0 ${pid}`;
-                    await $`sleep 1`;
+                    await $`kill -0 ${pid}`.quiet();
+                    await $`sleep 1`.quiet();
                     count++;
                   } catch {
                     // Process stopped
@@ -194,47 +194,59 @@ export const stopCommand: CommandDefinition = {
 
                 // Force kill if still running
                 try {
-                  await $`kill -0 ${pid}`;
+                  await $`kill -0 ${pid}`.quiet();
                   context.logger.warn('Process did not stop gracefully, force killing...');
-                  await $`kill -9 ${pid}`;
+                  await $`kill -9 ${pid}`.quiet();
                 } catch {
                   // Process already stopped
                 }
 
-                context.logger.info(chalk.green('✓') + ` Storage API stopped (PID: ${pid})`);
+                context.logger.info(chalk.green('✓') + ` ${service.displayName} stopped (PID: ${pid})`);
+                stoppedCount++;
               } catch {
-                context.logger.warn('Storage API not running (stale PID file)');
+                context.logger.warn(`${service.displayName} not running (stale PID file)`);
               }
 
               // Remove PID file
               await fs.remove(pidFile);
             } catch (error) {
-              context.logger.error('Failed to read PID file');
+              context.logger.error('Failed to read PID file:', error);
             }
           } else {
-            // No PID file, try to find node process
+            // Try to find running node processes
             try {
-              const result = await $`pgrep -f "node.*storage.*server.js"`.text();
+              const searchPattern = service.name === 'storage'
+                ? "node.*storage.*server.js"
+                : "node.*postgres-meta.*server.js";
+
+              const result = await $`pgrep -f "${searchPattern}"`.quiet().text();
               const pids = result.trim().split('\n').filter(p => p);
 
               if (pids.length > 0) {
-                context.logger.info(`Found storage process(es): ${pids.join(', ')}`);
+                context.logger.info(`Found ${service.displayName} process(es): ${pids.join(', ')}`);
                 for (const pid of pids) {
                   try {
-                    await $`kill ${pid}`;
+                    await $`kill ${pid}`.quiet();
                     context.logger.info(`Stopped process ${pid}`);
                   } catch {
                     // Process might have already stopped
                   }
                 }
-                context.logger.info(chalk.green('✓') + ' Storage API processes stopped');
+                context.logger.info(chalk.green('✓') + ` ${service.displayName} processes stopped`);
+                stoppedCount++;
               } else {
-                context.logger.warn('No Storage API process found');
+                context.logger.warn(`No ${service.displayName} processes found`);
               }
             } catch {
-              context.logger.warn('Storage API is not running');
+              context.logger.warn(`${service.displayName} is not running`);
             }
           }
+        }
+
+        if (stoppedCount > 0) {
+          context.logger.info(chalk.green(`\n✓ Stopped ${stoppedCount} service(s) successfully!`));
+        } else {
+          context.logger.warn('No running services found');
         }
 
       } else {

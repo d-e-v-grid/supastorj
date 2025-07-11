@@ -3,18 +3,17 @@
  */
 
 import { vi } from 'vitest';
+
 import { LoggerImpl } from '../src/core/logger.js';
 import { EventBusImpl } from '../src/core/event-bus.js';
 import { ConfigManager } from '../src/config/config-manager.js';
-import { CommandContext, Environment } from '../src/types/index.js';
+import { Environment, CommandContext } from '../src/types/index.js';
 
 // Mock zx with common functionality
 export const setupZxMocks = () => {
   vi.mock('zx', () => {
     const mockExec = vi.fn().mockImplementation((strings: TemplateStringsArray, ...values: any[]) => {
-      const cmd = strings.reduce((acc, str, i) => {
-        return acc + str + (values[i] || '');
-      }, '');
+      const cmd = strings.reduce((acc, str, i) => acc + str + (values[i] || ''), '');
       
       // Mock different commands
       if (cmd.includes('docker compose version')) {
@@ -96,11 +95,9 @@ export const createTestContext = (options: {
 };
 
 // Mock process.exit
-export const mockProcessExit = () => {
-  return vi.spyOn(process, 'exit').mockImplementation(() => {
+export const mockProcessExit = () => vi.spyOn(process, 'exit').mockImplementation(() => {
     throw new Error('process.exit');
   });
-};
 
 // Mock ConfigManager
 export const mockConfigManager = (config?: any) => {

@@ -7,9 +7,10 @@ import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { randomBytes } from 'crypto';
-import { rm, mkdir, chmod, readFile, writeFile } from 'fs/promises';
+import { rm, chmod, readFile, writeFile } from 'fs/promises';
 
-import { CommandContext, StorageBackendType } from '../../types/index.js';
+import { ConfigManager } from '../../config/config-manager.js';
+import { Environment, CommandContext, DeploymentMode, StorageBackendType } from '../../types/index.js';
 
 // Production deployment with source build support
 
@@ -34,8 +35,6 @@ async function downloadAndBuildStorage(
   context: CommandContext,
   targetDir: string = './storage'
 ): Promise<void> {
-  context.logger.info('Downloading Supabase Storage source code...');
-
   try {
     // Clean up existing directory
     if (existsSync(targetDir)) {
@@ -69,6 +68,45 @@ async function downloadAndBuildStorage(
 }
 
 /**
+ * Download and build Postgres Meta from GitHub
+ */
+async function downloadAndBuildPostgresMeta(
+  context: CommandContext,
+  targetDir: string = './postgres-meta'
+): Promise<void> {
+  try {
+    // Clean up existing directory
+    if (existsSync(targetDir)) {
+      await rm(targetDir, { recursive: true, force: true });
+    }
+
+    // Clone the repository
+    context.logger.info('Cloning Postgres Meta repository...');
+    $.verbose = false;
+    await $`git clone --depth 1 --branch master https://github.com/supabase/postgres-meta.git ${targetDir}`;
+
+    // Change to postgres-meta directory
+    const postgresMetaDir = join(process.cwd(), targetDir);
+
+    // Install dependencies
+    context.logger.info('Installing dependencies...');
+    $.verbose = false;
+    await $`cd ${postgresMetaDir} && npm install`;
+
+    // Build the project
+    context.logger.info('Building postgres-meta server...');
+    $.verbose = false;
+    await $`cd ${postgresMetaDir} && npm run build`;
+
+    context.logger.info(chalk.green('✓') + ' Postgres Meta built successfully');
+
+  } catch (error: any) {
+    context.logger.error('Failed to build Postgres Meta');
+    throw error;
+  }
+}
+
+/**
  * Generate production configuration
  */
 async function generateProductionConfig(
@@ -83,8 +121,8 @@ async function generateProductionConfig(
   // 1. Server configuration
   const serverHost = await text({
     message: 'Server Host',
-    placeholder: '0.0.0.0',
-    defaultValue: '0.0.0.0',
+    placeholder: '127.0.0.1',
+    initialValue: '127.0.0.1',
     validate: (value) => {
       if (!value) return 'Server host is required';
       return undefined;
@@ -94,9 +132,10 @@ async function generateProductionConfig(
   const serverPort = await text({
     message: 'Server Port',
     placeholder: '5000',
-    defaultValue: '5000',
+    initialValue: '5000',
     validate: (value) => {
       const port = parseInt(value);
+
       if (isNaN(port) || port < 1 || port > 65535) {
         return 'Please enter a valid port number (1-65535)';
       }
@@ -119,6 +158,7 @@ async function generateProductionConfig(
   const databaseUrl = await text({
     message: 'Database URL (PostgreSQL connection string)',
     placeholder: 'postgresql://postgres:postgres@127.0.0.1:5432/storage',
+    initialValue: 'postgresql://postgres:postgres@127.0.0.1:5432/storage',
     validate: (value) => {
       if (!value) return 'Database URL is required';
       if (!value.startsWith('postgresql://')) {
@@ -131,6 +171,7 @@ async function generateProductionConfig(
   const databasePoolUrl = await text({
     message: 'Database Pool URL (PgBouncer connection string)',
     placeholder: 'postgresql://postgres:postgres@127.0.0.1:6432/postgres',
+    initialValue: 'postgresql://postgres:postgres@127.0.0.1:6432/postgres',
     validate: (value) => {
       if (!value) return 'Database Pool URL is required';
       if (!value.startsWith('postgresql://')) {
@@ -179,6 +220,15 @@ async function generateProductionConfig(
     TENANT_ID: options.projectName || 'supastorj',
     REGION: 'us-east-1',
     PROJECT_NAME: options.projectName || 'supastorj',
+
+    // Postgres Meta Configuration
+    PG_META_PORT: '5001',
+    PG_META_DB_HOST: new URL(databaseUrl).hostname,
+    PG_META_DB_PORT: new URL(databaseUrl).port || '5432',
+    PG_META_DB_NAME: new URL(databaseUrl).pathname.slice(1) || 'postgres',
+    PG_META_DB_USER: new URL(databaseUrl).username || 'postgres',
+    PG_META_DB_PASSWORD: new URL(databaseUrl).password || 'postgres',
+    PG_META_DB_SSL: 'disable',
   };
 
   // 5. Storage backend specific configuration
@@ -267,10 +317,16 @@ async function generateProductionConfig(
   }
 
   // 6. Image transformation
-  const enableImageTransform = await confirm({
-    message: 'Enable image transformation? (requires imgproxy)',
-    initialValue: false,
-  });
+  const imageTransform = options.imageTransform ?? true;
+  let enableImageTransform = imageTransform;
+
+  if (!options.yes) {
+    const imageTransformResult = await confirm({
+      message: 'Enable image transformation? (requires imgproxy)',
+      initialValue: imageTransform,
+    });
+    enableImageTransform = typeof imageTransformResult === 'boolean' ? imageTransformResult : imageTransform;
+  }
 
   envVars['IMAGE_TRANSFORMATION_ENABLED'] = enableImageTransform ? 'true' : 'false';
 
@@ -291,12 +347,12 @@ async function generateProductionConfig(
 // Removed unused functions - these are not needed for simplified production deployment
 
 export interface ProdDeployOptions {
-  skipDeps?: boolean;
   services?: string;
   dryRun?: boolean;
   force?: boolean;
   yes?: boolean;
   skipEnv?: boolean;
+  imageTransform: boolean;
   projectName?: string;
 }
 
@@ -304,81 +360,8 @@ export interface ProdDeployOptions {
  * Create startup and shutdown scripts for production deployment
  */
 async function createProductionScripts(envVars: Record<string, string>): Promise<void> {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-
-  // Create systemd service from template
-  const templatesDir = join(__dirname, '../../../templates');
-  const serviceTemplate = await readFile(join(templatesDir, 'supastorj.service'), 'utf-8');
-  const workDir = process.cwd();
-
-  // Simple template replacement for source-based deployment only
-  let serviceContent = serviceTemplate
-    .replace(/{{systemUser}}/g, process.env['USER'] || 'supastorj')
-    .replace(/{{systemGroup}}/g, process.env['USER'] || 'supastorj')
-    .replace(/{{workingDirectory}}/g, workDir);
-
-  // Remove Docker sections and keep only source sections
-  serviceContent = serviceContent
-    .replace(/{{#useDocker}}[\s\S]*?{{\/useDocker}}/g, '')
-    .replace(/{{#useSource}}\n?/, '')
-    .replace(/\n?{{\/useSource}}/, '');
-
-  await writeFile('./supastorj.service', serviceContent);
-
-  // Create convenience start/stop scripts
-  const startScript = `#!/bin/bash
-set -e
-
-echo "Starting Supastorj Storage API..."
-
-# Load environment variables
-set -a
-source ${workDir}/.env
-set +a
-
-# Check which server file exists
-if [ -f "${workDir}/storage/dist/start/server.js" ]; then
-  # Production build location
-  cd ${workDir}/storage
-  exec node dist/start/server.js
-elif [ -f "${workDir}/storage/dist/main/index.js" ]; then
-  # Alternative build location
-  cd ${workDir}/storage
-  exec node dist/main/index.js
-else
-  echo "Error: Storage server not found!"
-  echo "Expected locations:"
-  echo "  - ${workDir}/storage/dist/start/server.js"
-  echo "  - ${workDir}/storage/dist/main/index.js"
-  exit 1
-fi
-`;
-
-  const stopScript = `#!/bin/bash
-set -e
-
-echo "Stopping Supastorj Storage API..."
-
-# Find and kill the process (try both possible paths)
-pkill -f "node.*storage/dist/start/server.js" || true
-pkill -f "node.*storage/dist/main/index.js" || true
-
-# Give process time to shut down gracefully
-sleep 2
-
-# Force kill if still running
-pkill -9 -f "node.*storage/dist/start/server.js" 2>/dev/null || true
-pkill -9 -f "node.*storage/dist/main/index.js" 2>/dev/null || true
-
-echo "Supastorj Storage API stopped."
-`;
-
-  await writeFile('./start-storage.sh', startScript);
-  await chmod('./start-storage.sh', 0o755);
-
-  await writeFile('./stop-storage.sh', stopScript);
-  await chmod('./stop-storage.sh', 0o755);
+  // This function is now empty as we handle systemd service creation in the start command
+  // The service file will be created and installed transparently when running `supastorj start`
 }
 
 export async function deployProdEnvironment(
@@ -386,13 +369,17 @@ export async function deployProdEnvironment(
   options: ProdDeployOptions
 ): Promise<void> {
   try {
-    const { intro, outro, confirm } = await import('@clack/prompts');
+    const { intro, outro } = await import('@clack/prompts');
 
     intro(chalk.cyan('🚀 Supastorj Production Deployment'));
 
     // Always build from source for production
     context.logger.info('Building Supabase Storage from source for production deployment...');
     await downloadAndBuildStorage(context);
+
+    // Build postgres-meta from source
+    context.logger.info('Building Postgres Meta from source for production deployment...');
+    await downloadAndBuildPostgresMeta(context);
 
     // Generate production configuration
     const envVars = await generateProductionConfig(context, options);
@@ -455,49 +442,77 @@ export async function deployProdEnvironment(
 
     context.logger.info(chalk.green('✅ Created .env'));
 
-    // Create startup/shutdown scripts
+    // Create startup/shutdown scripts (currently empty, kept for compatibility)
     await createProductionScripts(envVars);
 
-    context.logger.info(chalk.green('✅ Created supastorj.service'));
-
-    // Create deployment README from template
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const templatesDir = join(__dirname, '../../../templates');
-    const readmeTemplate = await readFile(join(templatesDir, 'README-DEPLOYMENT.md'), 'utf-8');
-
-    const readmeContent = readmeTemplate
-      .replace(/{{serverHost}}/g, envVars['SERVER_HOST'] || '0.0.0.0')
-      .replace(/{{serverPort}}/g, envVars['SERVER_PORT'] || '5000')
-      .replace(/{{jwtSecretPreview}}/g, envVars['AUTH_JWT_SECRET']?.substring(0, 8) || 'N/A')
-      .replace(/{{anonKeyPreview}}/g, envVars['ANON_KEY']?.substring(0, 8) || 'N/A')
-      .replace(/{{serviceKeyPreview}}/g, envVars['SERVICE_KEY']?.substring(0, 8) || 'N/A');
-
-    await writeFile('README-DEPLOYMENT.md', readmeContent, 'utf-8');
-    context.logger.info(chalk.green('✅ Created README-DEPLOYMENT.md'));
-
-    // Create project mode artifact
-    const modeArtifact = {
-      mode: 'production',
-      createdAt: new Date().toISOString(),
+    // Create config file for production
+    const configManager = new ConfigManager();
+    const config = ConfigManager.generateDefault({
       projectName: options.projectName || 'supastorj',
-      storageBackend: envVars['STORAGE_BACKEND'] || 's3',
-      buildFromSource: true,
-      databaseUrl: envVars['DATABASE_URL'] ? 'configured' : 'not-configured',
-    };
+      environment: Environment.Production,
+      storageBackend: envVars['STORAGE_BACKEND'] as StorageBackendType || StorageBackendType.S3,
+    });
 
-    await mkdir('.supastorj', { recursive: true });
-    await writeFile('.supastorj/project.json', JSON.stringify(modeArtifact, null, 2), 'utf-8');
+    // Update deployment mode
+    config.deploymentMode = DeploymentMode.BareMetal;
+
+    // Update service configuration based on user input
+    if (config.services) {
+      // Update postgres connection info
+      const dbUrl = new URL(envVars['DATABASE_URL'] || '');
+      config.services.postgres = {
+        enabled: true,
+        port: parseInt(dbUrl.port || '5432'),
+        host: dbUrl.hostname,
+      };
+
+      // Update pgBouncer connection info
+      const poolUrl = new URL(envVars['DATABASE_POOL_URL'] || '');
+      config.services.pgBouncer = {
+        enabled: true,
+        port: parseInt(poolUrl.port || '6432'),
+        host: poolUrl.hostname,
+      };
+
+      // Update storage API info
+      config.services.storage = {
+        enabled: true,
+        port: parseInt(envVars['SERVER_PORT'] || '3000'),
+        host: envVars['SERVER_HOST'] || 'localhost',
+      };
+
+      // Update MinIO/S3 info if using S3 backend
+      if (envVars['STORAGE_BACKEND'] === StorageBackendType.S3 && envVars['STORAGE_S3_ENDPOINT']) {
+        const s3Url = new URL(envVars['STORAGE_S3_ENDPOINT']);
+        config.services.minio = {
+          enabled: true,
+          port: parseInt(s3Url.port || '9000'),
+          consolePort: 9001, // Default console port
+          host: s3Url.hostname,
+        };
+      }
+
+      // Update imgproxy info if enabled
+      if (envVars['IMAGE_TRANSFORMATION_ENABLED'] === 'true' && envVars['IMGPROXY_URL']) {
+        const imgproxyUrl = new URL(envVars['IMGPROXY_URL']);
+        config.services.imgproxy = {
+          enabled: true,
+          port: parseInt(imgproxyUrl.port || '8080'),
+          host: imgproxyUrl.hostname,
+        };
+      }
+    }
+
+    // Save configuration
+    await configManager.save(config);
 
     outro(chalk.green(`
 ✅ Production deployment configured successfully!
 
 Next steps:
 1. Review configuration in ${chalk.cyan('.env')}
-2. Install systemd service (if applicable)
-3. Check logs after starting the service
-
-For systemd deployment, see README-DEPLOYMENT.md
+2. Run ${chalk.cyan('supastorj start')} to start the service
+3. Check logs with ${chalk.cyan('supastorj logs')} or ${chalk.cyan('sudo journalctl -u supastorj-storage.service -f')}
 `));
 
   } catch (error: any) {

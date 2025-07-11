@@ -9,6 +9,7 @@ import { randomBytes } from 'crypto';
 import { intro, outro, select, confirm, spinner } from '@clack/prompts';
 import { mkdir, access, copyFile, writeFile, constants } from 'fs/promises';
 
+import { withPrompt } from '../../utils/prompt-wrapper.js';
 import { ConfigManager } from '../../config/config-manager.js';
 import { Environment, CommandContext, StorageBackendType } from '../../types/index.js';
 
@@ -41,21 +42,11 @@ async function directoryExists(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Ensure directory exists
- */
-async function ensureDirectory(path: string): Promise<void> {
-  const dir = dirname(path);
-  if (!(await directoryExists(dir))) {
-    await mkdir(dir, { recursive: true });
-  }
-}
-
 export interface DevDeployOptions {
   force?: boolean;
   yes?: boolean;
   skipEnv?: boolean;
-  noImageTransform?: boolean;
+  imageTransform: boolean;
   storageBackend?: StorageBackendType;
   projectName?: string;
 }
@@ -64,7 +55,7 @@ export async function deployDevEnvironment(
   context: CommandContext,
   options: DevDeployOptions
 ): Promise<void> {
-  const { force, yes, skipEnv, noImageTransform } = options;
+  const { force, yes, skipEnv, imageTransform } = options;
 
   intro(chalk.cyan('🚀 Deploying Supastorj Development Environment'));
 
@@ -92,34 +83,43 @@ export async function deployDevEnvironment(
   // Get project configuration
   const projectName = options.projectName || 'supastorj';
   let storageBackend = options.storageBackend || StorageBackendType.File;
-  let enableImageTransform = !noImageTransform;
+  let enableImageTransform = imageTransform;
   let enableRedis = false;
 
   // In dev environment, always use Development environment
   const environment = Environment.Development;
 
   if (!yes) {
-    storageBackend = await select({
-      message: 'Storage backend:',
-      options: [
-        { value: StorageBackendType.File, label: 'File System (local storage)' },
-        { value: StorageBackendType.S3, label: 'S3 Compatible (MinIO)' },
-      ],
-    }) as StorageBackendType;
+    storageBackend = await withPrompt(context.logger, async () =>
+      await select({
+        message: 'Storage backend:',
+        options: [
+          { value: StorageBackendType.File, label: 'File System (local storage)' },
+          { value: StorageBackendType.S3, label: 'S3 Compatible (MinIO)' },
+        ],
+      }) as StorageBackendType
+    );
 
     // Ask about optional services
-    const imageTransformResult = await confirm({
-      message: 'Enable image transformation (requires imgproxy)?',
-      initialValue: !noImageTransform,
-    });
-    enableImageTransform = typeof imageTransformResult === 'boolean' ? imageTransformResult : !noImageTransform;
+    const imageTransformResult = await withPrompt(context.logger, async () =>
+      await confirm({
+        message: 'Enable image transformation (requires imgproxy)?',
+        initialValue: imageTransform,
+      })
+    );
+    enableImageTransform = typeof imageTransformResult === 'boolean' ? imageTransformResult : imageTransform;
 
-    const redisResult = await confirm({
-      message: 'Enable Redis for caching?',
-      initialValue: false,
-    });
+    const redisResult = await withPrompt(context.logger, async () =>
+      await confirm({
+        message: 'Enable Redis for caching?',
+        initialValue: false,
+      })
+    );
     enableRedis = typeof redisResult === 'boolean' ? redisResult : false;
   }
+
+  // Flush logger before starting spinner
+  context.logger.flush?.();
 
   const s = spinner();
   s.start('Generating configuration files...');
@@ -197,7 +197,7 @@ export async function deployDevEnvironment(
       // Add remaining common settings
       Object.assign(envVars, {
         // Postgres Meta
-        POSTGRES_META_PORT: '8080',
+        POSTGRES_META_PORT: '5001',
 
         // Upload limits
         UPLOAD_FILE_SIZE_LIMIT: '524288000',
@@ -249,7 +249,6 @@ export async function deployDevEnvironment(
     const directories = [
       configManager.getConfigDir(),
       './logs',
-      './plugins',
     ];
 
     for (const dir of directories) {
@@ -260,7 +259,6 @@ export async function deployDevEnvironment(
     const templatesDir = join(__dirname, '../../../templates');
     const templateFiles = [
       { src: '.gitignore', dest: '.gitignore' },
-      { src: 'README.md', dest: 'README.md' },
     ];
 
     for (const { src, dest } of templateFiles) {

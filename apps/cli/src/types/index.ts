@@ -9,7 +9,6 @@ import { z } from 'zod';
  */
 export enum Environment {
   Development = 'development',
-  Staging = 'staging',
   Production = 'production',
 }
 
@@ -52,15 +51,6 @@ export enum ServiceStatus {
   Unknown = 'unknown',
 }
 
-/**
- * Plugin types
- */
-export enum PluginType {
-  Command = 'command',
-  Service = 'service',
-  UI = 'ui',
-  Hook = 'hook',
-}
 
 /**
  * Event types
@@ -70,8 +60,6 @@ export enum EventType {
   ServiceStop = 'service:stop',
   ServiceError = 'service:error',
   ConfigChange = 'config:change',
-  PluginLoad = 'plugin:load',
-  PluginUnload = 'plugin:unload',
   CommandExecute = 'command:execute',
   CommandComplete = 'command:complete',
   CommandError = 'command:error',
@@ -140,7 +128,7 @@ export const SupastorjConfigSchema = z.object({
     }).optional(),
     postgresMeta: z.object({
       enabled: z.boolean().default(true),
-      port: z.number().default(8080),
+      port: z.number().default(5001),
       host: z.string().default('localhost'),
     }).optional(),
     minio: z.object({
@@ -184,26 +172,6 @@ export interface CommandContext {
   eventBus: EventBus;
 }
 
-/**
- * Plugin interface
- */
-export interface Plugin {
-  name: string;
-  version: string;
-  type: PluginType;
-  init(context: PluginContext): Promise<void>;
-  destroy?(): Promise<void>;
-}
-
-/**
- * Plugin context
- */
-export interface PluginContext extends CommandContext {
-  registerCommand?(command: CommandDefinition): void;
-  registerService?(service: ServiceAdapter): void;
-  registerUI?(component: React.ComponentType): void;
-  registerHook?(event: EventType, handler: EventHandler): void;
-}
 
 /**
  * Command definition
@@ -282,6 +250,9 @@ export interface Logger {
   warn(message: string, meta?: any): void;
   error(message: string, meta?: any): void;
   audit(action: string, meta?: any): void;
+  silence?(): void;
+  unsilence?(): void;
+  flush?(): void;
 }
 
 /**

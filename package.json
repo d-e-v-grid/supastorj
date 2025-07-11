@@ -1,6 +1,6 @@
 {
   "name": "supastorj",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "description": "Modern DevOps platform for Supabase Storage management",
   "private": true,
   "repository": {
